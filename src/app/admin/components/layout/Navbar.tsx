@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Logo from '../../assets/iibs_logo.png';
 import React from 'react';
 import { signOut } from 'firebase/auth';
-import { auth } from '../../../../firebaseConfig'; 
+import { auth } from '../../../../../firebaseConfig'; 
 import { useRouter } from 'next/navigation';
 
 export default function RenderNav() {
@@ -38,7 +38,7 @@ export default function RenderNav() {
                             <Link href="/home" className="nav-link">Dashboard</Link>
                         </li>
                         <li className="nav-item">
-                            <Link href="/students" className="nav-link">Students</Link>
+                            <Link href="./roles" className="nav-link">Rôles</Link>
                         </li>
                         <li className="nav-item">
                             <Link href="/modules" className="nav-link">Modules</Link>

@@ -4,7 +4,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../../firebaseConfig';
 import { useRouter, usePathname } from 'next/navigation';
-import Navbar from './components/layout/Navbar';
+import Navbar from './admin/components/layout/Navbar';
 import 'bootstrap/dist/css/bootstrap.min.css';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -18,9 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       setUser(currentUser);
       setLoading(false);
 
-      if (!currentUser && pathname !== '/auth/login') {
-        router.push('/auth/login');
-      }
+
     });
 
     return () => unsubscribe();
@@ -37,7 +35,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     );
   }
 
-const hideNavbarPaths = ['/auth/login', '/auth/change-password'];
+const hideNavbarPaths = ['/admin/auth/login', '/admin/auth/change-password'];
 const shouldShowNavbar = user && !hideNavbarPaths.includes(pathname);
 
 return (

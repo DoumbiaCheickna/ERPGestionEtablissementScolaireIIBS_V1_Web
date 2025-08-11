@@ -3,30 +3,34 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import React from 'react';
+import RolesPage from '../pages/roles/page';
+import UsersManagement from '../pages/users/gestionUsers';
 
 // Import your form components
 
 
 export default function RenderHome() {
-  const [activeTab, setActiveTab] = useState('students');
+  const [activeTab, setActiveTab] = useState('roles');
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'students':
+      case 'roles':
         return (
           <>
             <p className="text-secondary">
               Manage student records, attendance, grades, and other relevant information.
               Add new students, update existing records, and generate reports.
             </p>
+            <RolesPage />
           </>
         );
-      case 'modules':
+      case 'users':
         return (
           <>
             <p className="text-secondary">
               Manage modules, assign them to teachers, and track progress.
             </p>
+            <UsersManagement />
           </>
         );
       case 'teachers':
@@ -43,6 +47,7 @@ export default function RenderHome() {
   };
 
   return (
+
     <div className="container mt-5">
       <h2 className="fw-bold">Welcome to School Manager</h2>
 
@@ -50,28 +55,21 @@ export default function RenderHome() {
       <ul className="nav nav-tabs mt-4">
         <li className="nav-item">
           <button
-            className={`nav-link fw-semibold ${activeTab === 'students' ? 'active' : 'text-secondary'}`}
-            onClick={() => setActiveTab('students')}
+            className={`nav-link fw-semibold ${activeTab === 'roles' ? 'active' : 'text-secondary'}`}
+            onClick={() => setActiveTab('roles')}
           >
-            Student Management
+            Role Management
           </button>
         </li>
         <li className="nav-item">
           <button
-            className={`nav-link fw-semibold ${activeTab === 'modules' ? 'active' : 'text-secondary'}`}
-            onClick={() => setActiveTab('modules')}
+            className={`nav-link fw-semibold ${activeTab === 'users' ? 'active' : 'text-secondary'}`}
+            onClick={() => setActiveTab('users')}
           >
-            Module Management
+            Users Management
           </button>
         </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link fw-semibold ${activeTab === 'teachers' ? 'active' : 'text-secondary'}`}
-            onClick={() => setActiveTab('teachers')}
-          >
-            Teacher Management
-          </button>
-        </li>
+
       </ul>
 
       {/* Content */}

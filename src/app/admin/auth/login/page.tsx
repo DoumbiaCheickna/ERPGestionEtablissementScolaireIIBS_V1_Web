@@ -1,7 +1,7 @@
 'use client';
 
 import { collection, getDocs, query, where } from "firebase/firestore";
-import { db, auth } from '../../../../firebaseConfig'; 
+import { db, auth } from '../../../../../firebaseConfig'; 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
@@ -49,6 +49,7 @@ export default function Login() {
         const email = userDoc.email;
         const firstLogin = userDoc.first_login;
 
+
         // Stocker le login dans localStorage pour la page de changement de mot de passe
         localStorage.setItem('userLogin', username);
 
@@ -84,7 +85,7 @@ export default function Login() {
           if (firstLogin === 1) {
             router.push("/auth/change-password");
           } else {
-            router.push("/home");
+            router.push("/admin/home");
           }
         }, 1000);
 
