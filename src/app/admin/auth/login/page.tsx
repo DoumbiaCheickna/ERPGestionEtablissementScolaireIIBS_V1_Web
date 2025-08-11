@@ -82,8 +82,8 @@ export default function Login() {
 
         // Redirection selon first_login
         setTimeout(() => {
-          if (firstLogin === 1) {
-            router.push("/auth/change-password");
+          if (firstLogin == 1) {
+            router.push("/admin/auth/change-password");
           } else {
             router.push("/admin/home");
           }

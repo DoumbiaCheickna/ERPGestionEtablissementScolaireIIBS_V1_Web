@@ -18,7 +18,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       setUser(currentUser);
       setLoading(false);
 
-
+      if (!currentUser && !['/admin/auth/login', '/admin/auth/change-password'].includes(pathname)) {
+        router.push('/admin/auth/login');
+      } 
     });
 
     return () => unsubscribe();
