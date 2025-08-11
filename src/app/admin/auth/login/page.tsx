@@ -57,6 +57,7 @@ export default function Login() {
           // Essayer de créer le compte Firebase Auth (si existe déjà, ça va planter)
           await createUserWithEmailAndPassword(auth, email, password);
           showSuccessToast("Compte créé et connecté !");
+          router.push("/admin/home");
         } catch (error: unknown) {
           if (
             typeof error === "object" &&
