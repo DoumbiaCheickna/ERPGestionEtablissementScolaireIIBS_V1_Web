@@ -108,14 +108,12 @@ export default function Login() {
         }
 
         // Redirection selon first_login
-        setTimeout(() => {
-          if (firstLogin == 1) {
-            router.push("/admin/auth/change-password");
-          } else {
-            router.push("/admin/home");
-          }
-        }, 1000);
-
+        if (firstLogin == 1) {
+          router.replace("/admin/auth/change-password");
+          return;
+        }
+        router.replace("/admin/home");
+        return;
       } else {
         showErrorToast("Identifiants invalides, veuillez réessayer.");
       }
@@ -129,18 +127,14 @@ export default function Login() {
   };
 
   return (
-    <div className="container-fluid" style={{ marginLeft: '-100px', marginTop: '50px' }}>
-      <div className="row justify-content-center pt-5">
-        <div className="col-md-4">
-          <Image
-            src={Logo}
-            alt="IBS Logo"
-            className="img-fluid"
-            style={{ maxWidth: '220px' }}
-          />
+     <div className="min-vh-100 d-flex align-items-center justify-content-center">
+      <div className="container">
+        <div className="row justify-content-center">
+          <div className="col-md-4">
+            <Image src={Logo} alt="IBS Logo" className="img-fluid d-block mx-auto mb-4" style={{ maxWidth: 220 }} />
           <form onSubmit={handleLogin}>
             <div className="mb-3">
-              <label htmlFor="username" className="form-label fw-semibold">Username</label>
+              <label htmlFor="username" className="form-label fw-semibold">Identifiant</label>
               <input
                 type="text"
                 id="username"
@@ -154,7 +148,7 @@ export default function Login() {
             </div>
 
             <div className="mb-3">
-              <label htmlFor="password" className="form-label fw-semibold">Password</label>
+              <label htmlFor="password" className="form-label fw-semibold">Mot de passe</label>
               <input
                 type="password"
                 id="password"
@@ -207,6 +201,7 @@ export default function Login() {
           />
         </div>
       </div>
+    </div>
     </div>
   );
 }
