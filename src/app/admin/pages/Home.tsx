@@ -5,6 +5,7 @@ import Link from 'next/link';
 import React from 'react';
 import RolesPage from '../pages/roles/page';
 import UsersManagement from '../pages/users/gestionUsers';
+import GestionModule from './modules/gestionModulesForm';
 
 // Import your form components
 
@@ -33,12 +34,13 @@ export default function RenderHome() {
             <UsersManagement />
           </>
         );
-      case 'teachers':
+      case 'modules':
         return (
           <>
             <p className="text-secondary">
               Manage teacher information, assign subjects, and track schedules.
             </p>
+            <GestionModule />
           </>
         );
       default:
@@ -67,6 +69,15 @@ export default function RenderHome() {
             onClick={() => setActiveTab('users')}
           >
             Users Management
+          </button>
+        </li>
+
+        <li className="nav-item">
+          <button
+            className={`nav-link fw-semibold ${activeTab === 'modules' ? 'active' : 'text-secondary'}`}
+            onClick={() => setActiveTab('modules')}
+          >
+            Modules Management
           </button>
         </li>
 

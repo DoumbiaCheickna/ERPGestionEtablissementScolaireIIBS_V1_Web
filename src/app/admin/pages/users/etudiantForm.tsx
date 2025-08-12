@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { collection, addDoc, getDocs, query, where } from "firebase/firestore";
 import { db } from '../../../../../firebaseConfig';
 import Toast from '../../components/ui/Toast';
@@ -9,19 +9,22 @@ interface StudentFormProps {
   roles: { id: string; libelle: string }[];
   niveaux: { id: string; libelle: string }[];
   filieres: { id: string; libelle: string }[];
+  partenaires: { id: string; libelle: string }[];
   showSuccessToast: (msg: string) => void;
   showErrorToast: (msg: string) => void;
   fetchData: () => Promise<void>;
 }
 
 export default function StudentForm({ 
-  roles, 
-  niveaux, 
-  filieres, 
+  roles = [], 
+  niveaux = [], 
+  filieres = [],
+  partenaires = [], 
   showSuccessToast, 
   showErrorToast, 
   fetchData 
 }: StudentFormProps) {
+
   const [studentForm, setStudentForm] = useState({
     email: '',
     login: '',
@@ -47,6 +50,12 @@ export default function StudentForm({
     annee_academique: '',
     type_inscription: '',
     dernier_etablissement: '',
+    
+    // Scholarship fields
+    boursier: 'non', // 'oui' ou 'non'
+    bourse_fournisseur: null as string | null,
+    bourse_valeur: 0,
+    
     diplome_obtenu: {
       serie: '',
       annee_obtention: '',
@@ -94,6 +103,22 @@ export default function StudentForm({
           ...studentForm.documents,
           [field]: e.target.files[0]
         }
+      });
+    }
+  };
+
+  const handleBoursierChange = (value: string) => {
+    if (value === 'non') {
+      setStudentForm({
+        ...studentForm,
+        boursier: value,
+        bourse_fournisseur: null,
+        bourse_valeur: 0
+      });
+    } else {
+      setStudentForm({
+        ...studentForm,
+        boursier: value
       });
     }
   };
@@ -206,6 +231,12 @@ export default function StudentForm({
         return;
       }
 
+      // Validation for scholarship
+      if (studentForm.boursier === 'oui' && !studentForm.bourse_fournisseur) {
+        showErrorToast('Veuillez sélectionner le fournisseur de bourse');
+        return;
+      }
+
       // Gérer la classe
       const classe = await createOrGetClass(studentForm.niveau_id, studentForm.filiere_id);
 
@@ -219,8 +250,16 @@ export default function StudentForm({
       const usersSnapshot = await getDocs(collection(db, "users"));
       const newUserId = usersSnapshot.size + 1;
 
+      // Prepare scholarship data
+      const scholarshipData = {
+        boursier: studentForm.boursier,
+        bourse_fournisseur: studentForm.boursier === 'oui' ? studentForm.bourse_fournisseur : null,
+        bourse_valeur: studentForm.boursier === 'oui' ? studentForm.bourse_valeur : 0
+      };
+
       await addDoc(collection(db, "users"), {
         ...studentForm,
+        ...scholarshipData,
         id: newUserId,
         role_id: studentRole.id,
         classe_id: classe.id,
@@ -256,6 +295,9 @@ export default function StudentForm({
         annee_academique: '',
         type_inscription: '',
         dernier_etablissement: '',
+        boursier: 'non',
+        bourse_fournisseur: null,
+        bourse_valeur: 0,
         diplome_obtenu: {
           serie: '',
           annee_obtention: '',
@@ -317,7 +359,7 @@ export default function StudentForm({
           <hr />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Prénom*</label>
+                    <label className="form-label">Prénom</label>
           <input
             type="text"
             className="form-control"
@@ -327,7 +369,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Nom*</label>
+          <label className="form-label">Nom</label>
           <input
             type="text"
             className="form-control"
@@ -337,7 +379,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Email*</label>
+          <label className="form-label">Email</label>
           <input
             type="email"
             className="form-control"
@@ -347,7 +389,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Nom d utilisateur*</label>
+          <label className="form-label">Login</label>
           <input
             type="text"
             className="form-control"
@@ -357,7 +399,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Mot de passe*</label>
+          <label className="form-label">Mot de passe</label>
           <input
             type="password"
             className="form-control"
@@ -373,6 +415,7 @@ export default function StudentForm({
             className="form-control"
             value={studentForm.date_naissance}
             onChange={(e) => setStudentForm({...studentForm, date_naissance: e.target.value})}
+            required
           />
         </div>
         <div className="col-md-4">
@@ -382,6 +425,7 @@ export default function StudentForm({
             className="form-control"
             value={studentForm.lieu_naissance}
             onChange={(e) => setStudentForm({...studentForm, lieu_naissance: e.target.value})}
+            required
           />
         </div>
         <div className="col-md-4">
@@ -391,6 +435,7 @@ export default function StudentForm({
             className="form-control"
             value={studentForm.nationalite}
             onChange={(e) => setStudentForm({...studentForm, nationalite: e.target.value})}
+            required
           />
         </div>
         <div className="col-md-4">
@@ -399,6 +444,7 @@ export default function StudentForm({
             className="form-select"
             value={studentForm.sexe}
             onChange={(e) => setStudentForm({...studentForm, sexe: e.target.value})}
+            required
           >
             <option value="">Sélectionner</option>
             <option value="M">Masculin</option>
@@ -412,15 +458,17 @@ export default function StudentForm({
             className="form-control"
             value={studentForm.cni_passeport}
             onChange={(e) => setStudentForm({...studentForm, cni_passeport: e.target.value})}
+            required
           />
         </div>
-        <div className="col-md-8">
-          <label className="form-label">Adresse complète</label>
+        <div className="col-md-4">
+          <label className="form-label">Adresse</label>
           <input
             type="text"
             className="form-control"
             value={studentForm.adresse}
             onChange={(e) => setStudentForm({...studentForm, adresse: e.target.value})}
+            required
           />
         </div>
         <div className="col-md-4">
@@ -430,6 +478,7 @@ export default function StudentForm({
             className="form-control"
             value={studentForm.telephone}
             onChange={(e) => setStudentForm({...studentForm, telephone: e.target.value})}
+            required
           />
         </div>
         <div className="col-md-4">
@@ -452,49 +501,49 @@ export default function StudentForm({
             type="number"
             className="form-control"
             value={studentForm.nombre_enfants}
-            onChange={(e) => setStudentForm({...studentForm, nombre_enfants: parseInt(e.target.value) || 0})}
+            onChange={(e) => setStudentForm({...studentForm, nombre_enfants: parseInt(e.target.value)})}
             min="0"
           />
         </div>
 
         {/* Informations académiques */}
-        <div className="col-12 mt-3">
+        <div className="col-12 mt-4">
           <h5 className="fw-bold">Informations académiques</h5>
           <hr />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Niveau*</label>
+          <label className="form-label">Niveau</label>
           <select
             className="form-select"
             value={studentForm.niveau_id}
             onChange={async (e) => {
-              await handleNiveauFiliereChange(e.target.value, studentForm.filiere_id);
+              const niveauId = e.target.value;
+              setStudentForm({...studentForm, niveau_id: niveauId});
+              await handleNiveauFiliereChange(niveauId, studentForm.filiere_id);
             }}
             required
           >
             <option value="">Sélectionner un niveau</option>
-            {niveaux.map(niveau => (
-              <option key={niveau.id} value={niveau.id}>
-                {niveau.libelle}
-              </option>
+            {niveaux.map((niveau) => (
+              <option key={niveau.id} value={niveau.id}>{niveau.libelle}</option>
             ))}
           </select>
         </div>
         <div className="col-md-4">
-          <label className="form-label">Filière*</label>
+          <label className="form-label">Filière</label>
           <select
             className="form-select"
             value={studentForm.filiere_id}
             onChange={async (e) => {
-              await handleNiveauFiliereChange(studentForm.niveau_id, e.target.value);
+              const filiereId = e.target.value;
+              setStudentForm({...studentForm, filiere_id: filiereId});
+              await handleNiveauFiliereChange(studentForm.niveau_id, filiereId);
             }}
             required
           >
             <option value="">Sélectionner une filière</option>
-            {filieres.map(filiere => (
-              <option key={filiere.id} value={filiere.id}>
-                {filiere.libelle}
-              </option>
+            {filieres.map((filiere) => (
+              <option key={filiere.id} value={filiere.id}>{filiere.libelle}</option>
             ))}
           </select>
         </div>
@@ -514,6 +563,7 @@ export default function StudentForm({
             className="form-control"
             value={studentForm.annee_academique}
             onChange={(e) => setStudentForm({...studentForm, annee_academique: e.target.value})}
+            required
           />
         </div>
         <div className="col-md-4">
@@ -524,8 +574,9 @@ export default function StudentForm({
             onChange={(e) => setStudentForm({...studentForm, type_inscription: e.target.value})}
           >
             <option value="">Sélectionner</option>
-            <option value="Inscription">Inscription</option>
-            <option value="Réinscription">Réinscription</option>
+            <option value="Nouveau">Nouveau</option>
+            <option value="Redoublant">Redoublant</option>
+            <option value="Transfert">Transfert</option>
           </select>
         </div>
         <div className="col-md-4">
@@ -537,8 +588,11 @@ export default function StudentForm({
             onChange={(e) => setStudentForm({...studentForm, dernier_etablissement: e.target.value})}
           />
         </div>
-        <div className="col-12">
-          <h6 className="fw-bold mt-3">Diplôme obtenu</h6>
+
+        {/* Diplôme obtenu */}
+        <div className="col-12 mt-4">
+          <h5 className="fw-bold">Diplôme obtenu</h5>
+          <hr />
         </div>
         <div className="col-md-4">
           <label className="form-label">Série</label>
@@ -572,8 +626,9 @@ export default function StudentForm({
         </div>
         <div className="col-md-4">
           <label className="form-label">Mention</label>
-          <select
-            className="form-select"
+          <input
+            type="text"
+            className="form-control"
             value={studentForm.diplome_obtenu.mention}
             onChange={(e) => setStudentForm({
               ...studentForm,
@@ -582,19 +637,62 @@ export default function StudentForm({
                 mention: e.target.value
               }
             })}
-          >
-            <option value="">Sélectionner</option>
-            <option value="Passable">Passable (inférieur à 11,99)</option>
-            <option value="Assez Bien">Assez Bien (12 à 13,99)</option>
-            <option value="Bien">Bien (14 à 15,99)</option>
-            <option value="Très Bien">Très Bien (16 à 17,99)</option>
-            <option value="Excellent">Excellent (18 à 20)</option>
-          </select>
+          />
         </div>
 
-        {/* Informations sur les parents/tuteurs */}
-        <div className="col-12 mt-3">
-          <h5 className="fw-bold">Parents/Tuteurs</h5>
+        {/* Bourse */}
+        <div className="col-12 mt-4">
+          <h5 className="fw-bold">Bourse</h5>
+          <hr />
+        </div>
+        <div className="col-md-4">
+          <label className="form-label">Boursier</label>
+          <select
+            className="form-select"
+            value={studentForm.boursier}
+            onChange={(e) => handleBoursierChange(e.target.value)}
+          >
+            <option value="non">Non</option>
+            <option value="oui">Oui</option>
+          </select>
+        </div>
+        {studentForm.boursier === 'oui' && (
+          <>
+            <div className="col-md-4">
+              <label className="form-label">Fournisseur de bourse</label>
+              <select
+                className="form-select"
+                value={studentForm.bourse_fournisseur || ''}
+                onChange={(e) => setStudentForm({
+                  ...studentForm,
+                  bourse_fournisseur: e.target.value
+                })}
+              >
+                <option value="">Sélectionner</option>
+                {partenaires && partenaires.map((partenaire) => (
+                  <option key={partenaire.id} value={partenaire.id}>{partenaire.libelle}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">Valeur de la bourse</label>
+              <input
+                type="number"
+                className="form-control"
+                value={studentForm.bourse_valeur}
+                onChange={(e) => setStudentForm({
+                  ...studentForm,
+                  bourse_valeur: parseFloat(e.target.value)
+                })}
+                min="0"
+              />
+            </div>
+          </>
+        )}
+
+        {/* Parents */}
+        <div className="col-12 mt-4">
+          <h5 className="fw-bold">Parents</h5>
           <hr />
         </div>
         <div className="col-md-4">
@@ -705,11 +803,8 @@ export default function StudentForm({
             })}
           />
         </div>
-        <div className="col-12">
-          <h6 className="fw-bold mt-3">Personne à contacter en cas d urgence</h6>
-        </div>
         <div className="col-md-4">
-          <label className="form-label">Lien avec l étudiant</label>
+          <label className="form-label">Lien avec le contact d urgence</label>
           <input
             type="text"
             className="form-control"
@@ -727,7 +822,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Adresse</label>
+          <label className="form-label">Adresse du contact d urgence</label>
           <input
             type="text"
             className="form-control"
@@ -745,7 +840,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Téléphone</label>
+          <label className="form-label">Téléphone du contact d urgence</label>
           <input
             type="tel"
             className="form-control"
@@ -764,7 +859,7 @@ export default function StudentForm({
         </div>
 
         {/* Informations médicales */}
-        <div className="col-12 mt-3">
+        <div className="col-12 mt-4">
           <h5 className="fw-bold">Informations médicales</h5>
           <hr />
         </div>
@@ -793,7 +888,7 @@ export default function StudentForm({
           </select>
         </div>
         <div className="col-md-3">
-          <label className="form-label">Allergies connues</label>
+          <label className="form-label">Allergies</label>
           <input
             type="text"
             className="form-control"
@@ -808,7 +903,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-3">
-          <label className="form-label">Maladies chroniques</label>
+          <label className="form-label">Maladies</label>
           <input
             type="text"
             className="form-control"
@@ -823,7 +918,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-3">
-          <label className="form-label">Handicap éventuel</label>
+          <label className="form-label">Handicap</label>
           <input
             type="text"
             className="form-control"
@@ -839,12 +934,12 @@ export default function StudentForm({
         </div>
 
         {/* Transport */}
-        <div className="col-12 mt-3">
+        <div className="col-12 mt-4">
           <h5 className="fw-bold">Transport</h5>
           <hr />
         </div>
-        <div className="col-md-4">
-          <label className="form-label">Moyen de transport principal</label>
+        <div className="col-md-6">
+          <label className="form-label">Moyen de transport</label>
           <select
             className="form-select"
             value={studentForm.transport.moyen}
@@ -857,16 +952,15 @@ export default function StudentForm({
             })}
           >
             <option value="">Sélectionner</option>
+            <option value="Bus scolaire">Bus scolaire</option>
+            <option value="Transport public">Transport public</option>
+            <option value="Véhicule personnel">Véhicule personnel</option>
             <option value="Marche">Marche</option>
-            <option value="Bus">Bus</option>
-            <option value="Vélo">Vélo</option>
-            <option value="Moto">Moto</option>
-            <option value="Voiture">Voiture</option>
             <option value="Autre">Autre</option>
           </select>
         </div>
-        <div className="col-md-4">
-          <label className="form-label">Temps moyen pour rejoindre le campus</label>
+        <div className="col-md-6">
+          <label className="form-label">Temps pour arriver au campus</label>
           <input
             type="text"
             className="form-control"
@@ -882,13 +976,13 @@ export default function StudentForm({
           />
         </div>
 
-        {/* Documents à fournir */}
-        <div className="col-12 mt-3">
-          <h5 className="fw-bold">Documents à fournir</h5>
+        {/* Documents */}
+        <div className="col-12 mt-4">
+          <h5 className="fw-bold">Documents</h5>
           <hr />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Copie légalisée du diplôme de baccalauréat</label>
+          <label className="form-label">Copie du BAC</label>
           <input
             type="file"
             className="form-control"
@@ -897,7 +991,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Copie de la pièce d identité (CNI/Passeport)</label>
+          <label className="form-label">Copie CNI/Passeport</label>
           <input
             type="file"
             className="form-control"
@@ -906,7 +1000,7 @@ export default function StudentForm({
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Relevés de notes des classes antérieures (L2/L3)</label>
+          <label className="form-label">Relevé de notes</label>
           <input
             type="file"
             className="form-control"
@@ -915,10 +1009,10 @@ export default function StudentForm({
           />
         </div>
 
+        {/* Submit button */}
         <div className="col-12 mt-4">
-          <button type="submit" className="btn btn-primary px-4">
-            <i className="bi bi-plus-lg me-2"></i>
-            Ajouter l étudiant
+          <button type="submit" className="btn btn-primary">
+            Enregistrer l étudiant
           </button>
         </div>
       </div>

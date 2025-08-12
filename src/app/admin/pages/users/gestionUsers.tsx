@@ -30,6 +30,10 @@ interface Role {
   libelle: string;
 }
 
+interface Partenaire {
+  id: string;
+  libelle: string;
+}
 interface Niveau {
   id: string;
   libelle: string;
@@ -48,9 +52,11 @@ interface Matiere {
 export default function UsersManagement() {
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [selectedRole, setSelectedRole] = useState('');
   const [niveaux, setNiveaux] = useState<Niveau[]>([]);
   const [filieres, setFilieres] = useState<Filiere[]>([]);
   const [matieres, setMatieres] = useState<Matiere[]>([]);
+  const [partenaires, setPartenaires] = useState<Partenaire[]>([]); 
   const [activeTab, setActiveTab] = useState<'student' | 'teacher' | 'admin' | 'responsable-financier'>('student');
   const [loading, setLoading] = useState(true);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -121,6 +127,15 @@ export default function UsersManagement() {
         libelle: doc.data().libelle
       })) as Matiere[];
       setMatieres(matieresList);
+
+      // Fetch partenaires
+      const partenairesQuery = query(collection(db, "partenaires"));
+      const partenairesSnapshot = await getDocs(partenairesQuery);
+      const partenairesList = partenairesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        libelle: doc.data().libelle
+      })) as Partenaire[];
+      setPartenaires(partenairesList);
       
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -172,12 +187,18 @@ export default function UsersManagement() {
   };
 
   // Filter users based on search term
-  const filteredUsers = users.filter(user => 
-    user.nom.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.prenom.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.login.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredUsers = users.filter(user => {
+    const matchesSearch =
+      user.nom.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.prenom.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.login.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const matchesRole = selectedRole ? user.role_id === selectedRole : true;
+
+    return matchesSearch && matchesRole;
+  });
+
 
   useEffect(() => {
     fetchData();
@@ -247,6 +268,7 @@ export default function UsersManagement() {
                   roles={roles}
                   niveaux={niveaux}
                   filieres={filieres}
+                  partenaires={partenaires}
                   showSuccessToast={showSuccessToast}
                   showErrorToast={showErrorToast}
                   fetchData={fetchData}
@@ -290,7 +312,8 @@ export default function UsersManagement() {
                   <i className="bi bi-people me-2 text-primary"></i>
                   Liste des utilisateurs
                 </h5>
-                <div className="d-flex">
+                
+               <div className="d-flex">
                   <input
                     type="text"
                     className="form-control me-2"
@@ -299,10 +322,26 @@ export default function UsersManagement() {
                     onChange={(e) => setSearchTerm(e.target.value)}
                     style={{ width: '200px' }}
                   />
+
+                  <select
+                    className="form-select me-2"
+                    style={{ width: '180px' }}
+                    value={selectedRole}
+                    onChange={(e) => setSelectedRole(e.target.value)}
+                  >
+                    <option value="">Tous les rôles</option>
+                    {roles.map((role) => (
+                      <option key={role.id} value={role.id}>
+                        {role.libelle}
+                      </option>
+                    ))}
+                  </select>
+
                   <span className="badge bg-light text-dark px-3 py-2">
                     Affichés: {filteredUsers.length}
                   </span>
                 </div>
+
               </div>
             </div>
             
