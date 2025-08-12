@@ -28,7 +28,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 
       // Redirect root to login
       if (pathname === '/') {
-        router.push('/auth/login');
+        router.push('/admin/auth/login');
         return;
       }
 
