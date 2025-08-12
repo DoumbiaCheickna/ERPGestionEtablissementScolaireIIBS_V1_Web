@@ -12,12 +12,12 @@ interface TeacherFormProps {
   fetchData: () => Promise<void>;
 }
 
-export default function TeacherForm({ 
-  roles, 
+export default function TeacherForm({
+  roles,
   matieres,
-  showSuccessToast, 
-  showErrorToast, 
-  fetchData 
+  showSuccessToast,
+  showErrorToast,
+  fetchData
 }: TeacherFormProps) {
   const [teacherForm, setTeacherForm] = useState({
     email: '',
@@ -28,7 +28,7 @@ export default function TeacherForm({
     role_id: '',
     first_login: '1',
     specialty: '',
-    specialite: '', // Added this field as it appears in your data
+    specialite: '',
     date_naissance: '',
     lieu_naissance: '',
     nationalite: '',
@@ -187,7 +187,7 @@ export default function TeacherForm({
 
   const handleCompetenceChange = (category: string, index: number, value: string) => {
     const newCompetences = { ...teacherForm.competences };
-    newCompetences[category as keyof typeof newCompetences][index] = value;
+    (newCompetences as any)[category][index] = value;
     setTeacherForm({
       ...teacherForm,
       competences: newCompetences
@@ -196,7 +196,7 @@ export default function TeacherForm({
 
   const handleAddCompetence = (category: string) => {
     const newCompetences = { ...teacherForm.competences };
-    newCompetences[category as keyof typeof newCompetences].push('');
+    (newCompetences as any)[category].push('');
     setTeacherForm({
       ...teacherForm,
       competences: newCompetences
@@ -205,7 +205,7 @@ export default function TeacherForm({
 
   const handleRemoveCompetence = (category: string, index: number) => {
     const newCompetences = { ...teacherForm.competences };
-    newCompetences[category as keyof typeof newCompetences].splice(index, 1);
+    (newCompetences as any)[category].splice(index, 1);
     setTeacherForm({
       ...teacherForm,
       competences: newCompetences
@@ -216,19 +216,25 @@ export default function TeacherForm({
     e.preventDefault();
     try {
       // Validation des champs obligatoires
-      if (!teacherForm.nom || !teacherForm.prenom || !teacherForm.email || 
+      if (!teacherForm.nom || !teacherForm.prenom || !teacherForm.email ||
           !teacherForm.login || !teacherForm.password || !teacherForm.specialty) {
         showErrorToast('Veuillez remplir tous les champs obligatoires');
         return;
       }
 
-      const teacherRole = roles.find(r => r.libelle === 'Professeur');
-      if (!teacherRole) {
-        showErrorToast('Rôle professeur non trouvé');
+      // ✅ Rôle sélectionné (obligatoire)
+      if (!teacherForm.role_id) {
+        showErrorToast('Veuillez sélectionner un rôle');
+        return;
+      }
+      const roleObj = roles.find(r => String(r.id) === String(teacherForm.role_id));
+      if (!roleObj) {
+        showErrorToast('Rôle sélectionné introuvable');
         return;
       }
 
-      if (teacherForm.matieres_enseignees.length === 0) {
+      // ✅ Si le rôle est "Professeur", on impose au moins une matière
+      if (roleObj.libelle === 'Professeur' && teacherForm.matieres_enseignees.length === 0) {
         showErrorToast('Veuillez sélectionner au moins une matière');
         return;
       }
@@ -245,12 +251,13 @@ export default function TeacherForm({
       await addDoc(collection(db, "users"), {
         ...teacherForm,
         id: newUserId,
-        role_id: teacherRole.id,
+        role_id: roleObj.id,           // <= id choisi dans le select
+        role_libelle: roleObj.libelle, // <= utile pour les redirections
         documents: fileUrls
       });
 
-      showSuccessToast('Professeur ajouté avec succès!');
-      
+      showSuccessToast('Utilisateur ajouté avec succès !');
+
       // Reset form
       setTeacherForm({
         email: '',
@@ -303,6 +310,7 @@ export default function TeacherForm({
           piece_identite: null
         }
       });
+
       await fetchData();
     } catch (error) {
       console.error('Erreur lors de l\'ajout du professeur:', error);
@@ -311,12 +319,31 @@ export default function TeacherForm({
   };
 
   const uploadFile = async (file: File): Promise<string> => {
+    // TODO: brancher vers Firebase Storage si besoin
     return `https://example.com/uploads/${file.name}`;
   };
 
   return (
     <form onSubmit={handleTeacherSubmit}>
       <div className="row g-3">
+        {/* Sélection du rôle */}
+        <div className="col-12">
+          <label className="form-label">Rôle*</label>
+          <select
+            className="form-select"
+            value={teacherForm.role_id}
+            onChange={(e) => setTeacherForm({ ...teacherForm, role_id: e.target.value })}
+            required
+          >
+            <option value="">Sélectionner un rôle</option>
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.libelle}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* Informations de base */}
         <div className="col-12">
           <h5 className="fw-bold">Informations de base</h5>
@@ -328,7 +355,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.prenom}
-            onChange={(e) => setTeacherForm({...teacherForm, prenom: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, prenom: e.target.value })}
             required
             placeholder="Entrez le prénom"
           />
@@ -339,7 +366,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.nom}
-            onChange={(e) => setTeacherForm({...teacherForm, nom: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, nom: e.target.value })}
             required
             placeholder="Entrez le nom"
           />
@@ -350,7 +377,7 @@ export default function TeacherForm({
             type="email"
             className="form-control"
             value={teacherForm.email}
-            onChange={(e) => setTeacherForm({...teacherForm, email: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })}
             required
             placeholder="exemple@email.com"
           />
@@ -361,7 +388,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.login}
-            onChange={(e) => setTeacherForm({...teacherForm, login: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, login: e.target.value })}
             required
             placeholder="Nom d'utilisateur unique"
           />
@@ -372,7 +399,7 @@ export default function TeacherForm({
             type="password"
             className="form-control"
             value={teacherForm.password}
-            onChange={(e) => setTeacherForm({...teacherForm, password: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, password: e.target.value })}
             required
             placeholder="Mot de passe sécurisé"
             minLength={6}
@@ -384,7 +411,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.specialty}
-            onChange={(e) => setTeacherForm({...teacherForm, specialty: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, specialty: e.target.value })}
             required
             placeholder="Spécialité du professeur"
           />
@@ -395,7 +422,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.specialite}
-            onChange={(e) => setTeacherForm({...teacherForm, specialite: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, specialite: e.target.value })}
             placeholder="Description détaillée de la spécialité (ex: Développeuse FullStack)"
           />
         </div>
@@ -411,7 +438,7 @@ export default function TeacherForm({
             type="date"
             className="form-control"
             value={teacherForm.date_naissance}
-            onChange={(e) => setTeacherForm({...teacherForm, date_naissance: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, date_naissance: e.target.value })}
           />
         </div>
         <div className="col-md-4">
@@ -420,7 +447,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.lieu_naissance}
-            onChange={(e) => setTeacherForm({...teacherForm, lieu_naissance: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, lieu_naissance: e.target.value })}
             placeholder="Lieu de naissance"
           />
         </div>
@@ -430,7 +457,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.nationalite}
-            onChange={(e) => setTeacherForm({...teacherForm, nationalite: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, nationalite: e.target.value })}
             placeholder="Nationalité"
           />
         </div>
@@ -439,7 +466,7 @@ export default function TeacherForm({
           <select
             className="form-select"
             value={teacherForm.sexe}
-            onChange={(e) => setTeacherForm({...teacherForm, sexe: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, sexe: e.target.value })}
           >
             <option value="">Sélectionner</option>
             <option value="Masculin">Masculin</option>
@@ -451,7 +478,7 @@ export default function TeacherForm({
           <select
             className="form-select"
             value={teacherForm.situation_matrimoniale}
-            onChange={(e) => setTeacherForm({...teacherForm, situation_matrimoniale: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, situation_matrimoniale: e.target.value })}
           >
             <option value="">Sélectionner</option>
             <option value="Célibataire">Célibataire</option>
@@ -466,7 +493,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.cni_passeport}
-            onChange={(e) => setTeacherForm({...teacherForm, cni_passeport: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, cni_passeport: e.target.value })}
             placeholder="Numéro CNI/Passeport"
           />
         </div>
@@ -482,7 +509,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.adresse}
-            onChange={(e) => setTeacherForm({...teacherForm, adresse: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, adresse: e.target.value })}
             placeholder="Adresse complète"
           />
         </div>
@@ -492,7 +519,7 @@ export default function TeacherForm({
             type="tel"
             className="form-control"
             value={teacherForm.telephone}
-            onChange={(e) => setTeacherForm({...teacherForm, telephone: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, telephone: e.target.value })}
             placeholder="Numéro de téléphone"
           />
         </div>
@@ -507,7 +534,7 @@ export default function TeacherForm({
           <select
             className="form-select"
             value={teacherForm.statut}
-            onChange={(e) => setTeacherForm({...teacherForm, statut: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, statut: e.target.value })}
           >
             <option value="">Sélectionner</option>
             <option value="Vacataire">Vacataire</option>
@@ -522,7 +549,7 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.fonction_principale}
-            onChange={(e) => setTeacherForm({...teacherForm, fonction_principale: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, fonction_principale: e.target.value })}
             placeholder="Fonction principale"
           />
         </div>
@@ -532,12 +559,12 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.disponibilite}
-            onChange={(e) => setTeacherForm({...teacherForm, disponibilite: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, disponibilite: e.target.value })}
             placeholder="Ex: Lundi-Vendredi, 8h-16h"
           />
         </div>
 
-        {/* Matières enseignées */}
+        {/* Matières enseignées (imposées si rôle Professeur) */}
         <div className="col-12 mt-3">
           <h6 className="fw-bold">Matières enseignées*</h6>
         </div>
@@ -548,15 +575,15 @@ export default function TeacherForm({
             value={teacherForm.matieres_enseignees}
             onChange={(e) => {
               const options = e.target.options;
-              const selectedValues = [];
+              const selectedValues: string[] = [];
               for (let i = 0; i < options.length; i++) {
                 if (options[i].selected) {
                   selectedValues.push(options[i].value);
                 }
               }
-              setTeacherForm({...teacherForm, matieres_enseignees: selectedValues});
+              setTeacherForm({ ...teacherForm, matieres_enseignees: selectedValues });
             }}
-            required
+            required={roles.find(r => String(r.id) === String(teacherForm.role_id))?.libelle === 'Professeur'}
           >
             {matieres.map(matiere => (
               <option key={matiere.id} value={matiere.id}>
@@ -579,13 +606,13 @@ export default function TeacherForm({
             className="form-control"
             value={teacherForm.experience_enseignement.annees}
             onChange={(e) => setTeacherForm({
-              ...teacherForm, 
+              ...teacherForm,
               experience_enseignement: {
                 ...teacherForm.experience_enseignement,
                 annees: parseInt(e.target.value) || 0
               }
             })}
-            min="0"
+            min={0}
             placeholder="Nombre d'années"
           />
         </div>
@@ -707,7 +734,6 @@ export default function TeacherForm({
                   onClick={() => handleRemoveDiplome(index)}
                 >
                   <i className="bi bi-trash"></i>
-                  X
                 </button>
               )}
             </div>
@@ -753,7 +779,6 @@ export default function TeacherForm({
             onClick={() => handleAddArrayItem('domaines_specialisation')}
           >
             <i className="bi bi-plus me-1"></i>
-            X
             Ajouter domaine
           </button>
         </div>
@@ -764,7 +789,7 @@ export default function TeacherForm({
           <textarea
             className="form-control"
             value={teacherForm.formation_pedagogique}
-            onChange={(e) => setTeacherForm({...teacherForm, formation_pedagogique: e.target.value})}
+            onChange={(e) => setTeacherForm({ ...teacherForm, formation_pedagogique: e.target.value })}
             placeholder="Décrivez vos formations pédagogiques..."
             rows={3}
           />
@@ -922,7 +947,6 @@ export default function TeacherForm({
             onClick={handleAddExperience}
           >
             <i className="bi bi-plus me-1"></i>
-            X
             Ajouter expérience
           </button>
         </div>
@@ -998,7 +1022,6 @@ export default function TeacherForm({
             Ajouter langue
           </button>
         </div>
-
 
         {/* Documents à fournir */}
         <div className="col-12 mt-3">
