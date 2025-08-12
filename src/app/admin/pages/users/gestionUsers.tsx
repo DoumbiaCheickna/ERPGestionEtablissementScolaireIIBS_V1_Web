@@ -7,6 +7,7 @@ import Toast from '../../components/ui/Toast';
 import StudentForm from './etudiantForm';
 import TeacherForm from './professeurForm';
 import AdminForm from './adminForm'; 
+import ResponsableFinancierForm from "./RespoFinancierForm";
 
 interface User {
   classe?: string;
@@ -20,6 +21,7 @@ interface User {
   role_id: string;
   docId?: string;
   specialty?: string;
+  intitule_poste?: string;
   // ... other fields
 }
 
@@ -49,7 +51,7 @@ export default function UsersManagement() {
   const [niveaux, setNiveaux] = useState<Niveau[]>([]);
   const [filieres, setFilieres] = useState<Filiere[]>([]);
   const [matieres, setMatieres] = useState<Matiere[]>([]);
-  const [activeTab, setActiveTab] = useState<'student' | 'teacher' | 'admin'>('student');
+  const [activeTab, setActiveTab] = useState<'student' | 'teacher' | 'admin' | 'responsable-financier'>('student');
   const [loading, setLoading] = useState(true);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showError, setShowError] = useState(false);
@@ -187,7 +189,7 @@ export default function UsersManagement() {
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h2 className="fw-bold text-dark mb-1">Gestion des utilisateurs</h2>
-          <p className="text-muted mb-0">Gérer les étudiants, professeurs et administrateurs</p>
+          <p className="text-muted mb-0">Gérer les étudiants, professeurs, administrateurs et responsables financiers</p>
         </div>
         <div className="badge bg-primary fs-6 px-3 py-2">
           {users.length} utilisateur{users.length !== 1 ? 's' : ''}
@@ -227,6 +229,15 @@ export default function UsersManagement() {
                     Ajouter un administrateur
                   </button>
                 </li>
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'responsable-financier' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('responsable-financier')}
+                  >
+                    <i className="bi bi-calculator me-2"></i>
+                    Ajouter un responsable financier
+                  </button>
+                </li>
               </ul>
             </div>
             
@@ -252,6 +263,14 @@ export default function UsersManagement() {
               )}
               {activeTab === 'admin' && (
                 <AdminForm 
+                  roles={roles}
+                  showSuccessToast={showSuccessToast}
+                  showErrorToast={showErrorToast}
+                  fetchData={fetchData}
+                />
+              )}
+              {activeTab === 'responsable-financier' && (
+                <ResponsableFinancierForm 
                   roles={roles}
                   showSuccessToast={showSuccessToast}
                   showErrorToast={showErrorToast}
@@ -306,7 +325,7 @@ export default function UsersManagement() {
                           <th>Email</th>
                           <th>Nom d utilisateur</th>
                           <th>Rôle</th>
-                          <th>Classe</th>
+                          <th>Classe/Poste</th>
                           <th>Première connexion</th>
                           <th>Actions</th>
                         </tr>
@@ -379,7 +398,7 @@ export default function UsersManagement() {
                               )}
                             </td>
                             <td>
-                              {user.classe || '-'}
+                              {user.classe || user.intitule_poste || user.specialty || '-'}
                             </td>
                             <td>
                               {user.first_login === '1' ? (
