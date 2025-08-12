@@ -7,7 +7,7 @@ import Toast from '../../components/ui/Toast';
 import StudentForm from './etudiantForm';
 import TeacherForm from './professeurForm';
 import AdminForm from './adminForm'; 
-import ResponsableFinancierForm from "./RespoFinancierForm";
+import ResponsableFinancierForm from "./respoFinancierForm";
 
 interface User {
   classe?: string;
