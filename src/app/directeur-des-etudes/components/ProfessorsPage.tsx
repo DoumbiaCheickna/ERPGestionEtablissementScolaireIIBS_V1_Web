@@ -9,6 +9,10 @@ import {
   query,
   where,
   DocumentData,
+  doc,
+  getDoc,
+  updateDoc,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
 import Toast from "../../admin/components/ui/Toast";
@@ -18,6 +22,8 @@ import Toast from "../../admin/components/ui/Toast";
 /* ------------------------------------------------------------------ */
 type TRole = { id: string | number; libelle: string };
 type TMatiere = { id: string; libelle: string };
+type TClasse = { id: string; libelle: string };
+
 type TUserRow = {
   id?: number;
   docId: string;
@@ -27,6 +33,8 @@ type TUserRow = {
   specialty?: string;
   role_id?: string | number;
   role_libelle?: string;
+  classe_id?: string;
+  classe_libelle?: string;
 };
 
 /* ------------------------------------------------------------------ */
@@ -35,6 +43,7 @@ type TUserRow = {
 export default function ProfessorsPage() {
   const [roles, setRoles] = useState<TRole[]>([]);
   const [matieres, setMatieres] = useState<TMatiere[]>([]);
+  const [classes, setClasses] = useState<TClasse[]>([]);
   const [list, setList] = useState<TUserRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -45,6 +54,15 @@ export default function ProfessorsPage() {
 
   // UI: formulaire visible ?
   const [showForm, setShowForm] = useState(false);
+
+  // Details modal
+  const [showDetails, setShowDetails] = useState(false);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
+  const [details, setDetails] = useState<any>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [assigning, setAssigning] = useState(false);
 
   const showSuccessToast = (msg: string) => {
     setToastMessage(msg);
@@ -75,20 +93,33 @@ export default function ProfessorsPage() {
       });
       setMatieres(ms);
     } catch {
-      // Pas bloquant si la collection n'existe pas encore
       setMatieres([]);
+    }
+  };
+
+  const fetchClasses = async () => {
+    try {
+      const snap = await getDocs(collection(db, "classes"));
+      const cs: TClasse[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as any;
+        cs.push({ id: d.id, libelle: data.libelle ?? d.id });
+      });
+      setClasses(cs);
+    } catch {
+      setClasses([]);
     }
   };
 
   const fetchProfessors = async () => {
     setLoading(true);
     try {
-      // on essaye d'abord via role_libelle == 'Professeur'
+      // 1) via role_libelle
       let snap = await getDocs(
         query(collection(db, "users"), where("role_libelle", "==", "Professeur"))
       );
 
-      // si vide, on retente via role_id
+      // 2) sinon via role_id
       if (snap.empty) {
         const profRole = roles.find((r) => r.libelle === "Professeur");
         if (profRole) {
@@ -99,7 +130,7 @@ export default function ProfessorsPage() {
             )
           );
         } else {
-          // sinon on prend tout et on filtrera
+          // 3) sinon tout
           snap = await getDocs(collection(db, "users"));
         }
       }
@@ -115,14 +146,16 @@ export default function ProfessorsPage() {
           specialite: data.specialite || data.specialty || "",
           role_id: data.role_id,
           role_libelle: data.role_libelle,
+          classe_id: data.classe_id,
+          classe_libelle: data.classe_libelle,
         });
       });
 
-      // Filtre de secours si on a dû tout récupérer
+      // Filtre final si nécessaire
       const final = rows.filter((r) => {
         if (r.role_libelle) return r.role_libelle === "Professeur";
         const pr = roles.find((x) => x.libelle === "Professeur");
-        if (!pr) return true; // si on ne connaît pas le rôle, on affiche tout (au pire)
+        if (!pr) return true;
         return String(r.role_id ?? "") === String(pr.id ?? "");
       });
 
@@ -136,7 +169,7 @@ export default function ProfessorsPage() {
   };
 
   const fetchAll = async () => {
-    await Promise.all([fetchRoles(), fetchMatieres()]);
+    await Promise.all([fetchRoles(), fetchMatieres(), fetchClasses()]);
     await fetchProfessors();
   };
 
@@ -150,6 +183,106 @@ export default function ProfessorsPage() {
     if (roles.length) fetchProfessors();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roles.length]);
+
+  /* ---------------------- Détails: open / load ---------------------- */
+  const openDetails = async (docId: string) => {
+    setShowDetails(true);
+    setDetailsLoading(true);
+    setEditMode(false);
+    setSavingEdit(false);
+    setAssigning(false);
+    setDetailsDocId(docId);
+    try {
+      const ref = doc(db, "users", docId);
+      const d = await getDoc(ref);
+      if (!d.exists()) {
+        showErrorToast("Professeur introuvable.");
+        setShowDetails(false);
+        return;
+      }
+      setDetails({ docId, ...d.data() });
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Erreur lors du chargement des détails.");
+      setShowDetails(false);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
+  /* ---------------------- Détails: modifier ------------------------- */
+  const saveEdition = async () => {
+    if (!detailsDocId || !details) return;
+    setSavingEdit(true);
+    try {
+      const ref = doc(db, "users", detailsDocId);
+      // On persiste quelques champs clés (tu pourras étendre si besoin)
+      const payload: any = {
+        nom: details.nom || "",
+        prenom: details.prenom || "",
+        email: details.email || "",
+        login: details.login || "",
+        specialty: details.specialty || details.specialite || "",
+        specialite: details.specialite || details.specialty || "",
+        telephone: details.telephone || "",
+        adresse: details.adresse || "",
+      };
+      await updateDoc(ref, payload);
+      showSuccessToast("Modifications enregistrées.");
+      setEditMode(false);
+      await fetchProfessors();
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Impossible d’enregistrer les modifications.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  /* ---------------------- Détails: supprimer ------------------------ */
+  const deleteProfessor = async () => {
+    if (!detailsDocId) return;
+    if (!confirm("Confirmer la suppression de ce professeur ?")) return;
+    try {
+      await deleteDoc(doc(db, "users", detailsDocId));
+      showSuccessToast("Professeur supprimé.");
+      setShowDetails(false);
+      await fetchProfessors();
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Suppression impossible.");
+    }
+  };
+
+  /* ---------------------- Détails: affecter classe ------------------ */
+  const [selectedClasseId, setSelectedClasseId] = useState<string>("");
+  useEffect(() => {
+    if (showDetails && details) {
+      setSelectedClasseId(details.classe_id || "");
+    }
+  }, [showDetails, details]);
+
+  const assignClasse = async () => {
+    if (!detailsDocId) return;
+    setAssigning(true);
+    try {
+      const chosen = classes.find((c) => c.id === selectedClasseId);
+      await updateDoc(doc(db, "users", detailsDocId), {
+        classe_id: selectedClasseId || null,
+        classe_libelle: chosen?.libelle || null,
+      });
+      showSuccessToast("Affectation enregistrée.");
+      // refresh details
+      const d = await getDoc(doc(db, "users", detailsDocId));
+      setDetails({ docId: detailsDocId, ...d.data() });
+      await fetchProfessors();
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Affectation impossible.");
+    } finally {
+      setAssigning(false);
+    }
+  };
 
   return (
     <div className="container-fluid py-3">
@@ -189,7 +322,7 @@ export default function ProfessorsPage() {
         </div>
       )}
 
-      {/* Liste courte pour vérif d’ajout */}
+      {/* Liste */}
       <div className="card border-0 shadow-sm">
         <div className="card-header bg-white border-0">
           <div className="d-flex justify-content-between align-items-center">
@@ -220,7 +353,8 @@ export default function ProfessorsPage() {
                     <th>Nom</th>
                     <th>Prénom</th>
                     <th>Spécialité</th>
-                    <th style={{ width: 140 }}>Actions</th>
+                    <th>Classe</th>
+                    <th style={{ width: 180 }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -229,10 +363,15 @@ export default function ProfessorsPage() {
                       <td className="fw-semibold">{u.nom}</td>
                       <td>{u.prenom}</td>
                       <td>{u.specialite || "-"}</td>
-                      <td>
-                        <button className="btn btn-outline-secondary btn-sm" disabled>
+                      <td>{u.classe_libelle || "-"}</td>
+                      <td className="d-flex gap-2">
+                        <button
+                          className="btn btn-outline-secondary btn-sm"
+                          onClick={() => openDetails(u.docId)}
+                        >
                           Voir plus
                         </button>
+                        {/* hooks futurs: modifier/supprimer rapides si besoin */}
                       </td>
                     </tr>
                   ))}
@@ -242,6 +381,186 @@ export default function ProfessorsPage() {
           )}
         </div>
       </div>
+
+      {/* Modal détails */}
+      {showDetails && (
+        <>
+          <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-lg modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">
+                    <i className="bi bi-person-vcard me-2" />
+                    Détails du professeur
+                  </h5>
+                  <button type="button" className="btn-close" onClick={() => setShowDetails(false)} />
+                </div>
+
+                <div className="modal-body">
+                  {detailsLoading ? (
+                    <div className="text-center py-4">
+                      <div className="spinner-border" role="status" />
+                      <div className="text-muted mt-2">Chargement…</div>
+                    </div>
+                  ) : details ? (
+                    <>
+                      {/* Infos principales */}
+                      <div className="row g-3">
+                        <div className="col-md-4">
+                          <label className="form-label">Prénom</label>
+                          <input
+                            className="form-control"
+                            value={details.prenom || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, prenom: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Nom</label>
+                          <input
+                            className="form-control"
+                            value={details.nom || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, nom: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Email</label>
+                          <input
+                            className="form-control"
+                            value={details.email || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, email: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Login</label>
+                          <input
+                            className="form-control"
+                            value={details.login || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, login: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Spécialité</label>
+                          <input
+                            className="form-control"
+                            value={details.specialite || details.specialty || ""}
+                            onChange={(e) =>
+                              setDetails({
+                                ...details,
+                                specialite: e.target.value,
+                                specialty: e.target.value,
+                              })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Téléphone</label>
+                          <input
+                            className="form-control"
+                            value={details.telephone || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, telephone: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-12">
+                          <label className="form-label">Adresse</label>
+                          <input
+                            className="form-control"
+                            value={details.adresse || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, adresse: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                      </div>
+
+                      <hr className="my-3" />
+
+                      {/* Affectation classe */}
+                      <div className="row g-2 align-items-end">
+                        <div className="col-md-8">
+                          <label className="form-label">Affecter à une classe</label>
+                          <select
+                            className="form-select"
+                            value={selectedClasseId}
+                            onChange={(e) => setSelectedClasseId(e.target.value)}
+                          >
+                            <option value="">— Aucune —</option>
+                            {classes.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.libelle}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="col-md-4 d-flex gap-2">
+                          <button
+                            className="btn btn-outline-primary w-100"
+                            onClick={assignClasse}
+                            disabled={assigning}
+                          >
+                            {assigning ? (
+                              <>
+                                <span className="spinner-border spinner-border-sm me-2" />
+                                Affectation…
+                              </>
+                            ) : (
+                              "Enregistrer l’affectation"
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-muted">Aucune donnée à afficher.</div>
+                  )}
+                </div>
+
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setShowDetails(false)}>
+                    Fermer
+                  </button>
+                  {!editMode ? (
+                    <button className="btn btn-primary" onClick={() => setEditMode(true)}>
+                      Modifier
+                    </button>
+                  ) : (
+                    <button className="btn btn-primary" onClick={saveEdition} disabled={savingEdit}>
+                      {savingEdit ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" />
+                          Enregistrement…
+                        </>
+                      ) : (
+                        "Enregistrer"
+                      )}
+                    </button>
+                  )}
+                  <button className="btn btn-outline-danger" onClick={deleteProfessor}>
+                    Supprimer
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={() => setShowDetails(false)} />
+        </>
+      )}
 
       {/* Toasts */}
       <Toast
@@ -333,7 +652,6 @@ function TeacherForm({
   });
 
   const uploadFile = async (file: File): Promise<string> => {
-    // branchement futur sur Firebase Storage si besoin
     return `https://example.com/uploads/${file.name}`;
   };
 
@@ -435,7 +753,9 @@ function TeacherForm({
     (newCompetences as any)[category][index] = value;
     setTeacherForm((prev) => ({ ...prev, competences: newCompetences }));
   };
-  const handleAddCompetence = (category: "outils" | "langues" | "publications") => {
+  const handleAddCompetence = (
+    category: "outils" | "langues" | "publications"
+  ) => {
     const newCompetences = { ...teacherForm.competences };
     (newCompetences as any)[category].push("");
     setTeacherForm((prev) => ({ ...prev, competences: newCompetences }));
@@ -448,11 +768,6 @@ function TeacherForm({
     (newCompetences as any)[category].splice(index, 1);
     setTeacherForm((prev) => ({ ...prev, competences: newCompetences }));
   };
-
-  const selectedRoleLabel = useMemo(() => {
-    const r = roles.find((x) => String(x.id) === String(teacherForm.role_id));
-    return r?.libelle ?? "";
-  }, [teacherForm.role_id, roles]);
 
   const handleTeacherSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -863,7 +1178,7 @@ function TeacherForm({
                 matieres_enseignees: selectedValues,
               });
             }}
-            required={selectedRoleLabel === "Professeur"}
+            required={true}
           >
             {matieres.map((m) => (
               <option key={m.id} value={m.id}>
