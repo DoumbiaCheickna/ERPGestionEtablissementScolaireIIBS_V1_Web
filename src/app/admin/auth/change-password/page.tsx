@@ -1,6 +1,6 @@
 'use client';
 
-import { collection, getDocs, query, where, doc, updateDoc } from "firebase/firestore";
+import { collection, getDocs, query, where, doc, updateDoc, getDoc } from "firebase/firestore";
 import { db, auth } from '../../../../../firebaseConfig'; 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -27,7 +27,7 @@ export default function ChangePassword() {
       setUserLogin(login);
     } else {
       // Si pas de login, rediriger vers login
-      router.push("/login");
+      router.push("../login");
     }
   }, [router]);
 
@@ -85,10 +85,23 @@ export default function ChangePassword() {
 
         showSuccessToast("Mot de passe changé avec succès !");
 
-        // Nettoyer localStorage et rediriger
+        // Récupérer les informations du rôle (même logique que dans Login)
+        const roleId = userData.role_id;
+        const roleDoc = await getDoc(doc(db, "roles", roleId));
+        const roleData = roleDoc.data();
+        const roleName = roleData?.libelle || '';
+        
+        console.log("Role Name:", roleName);
+        
         setTimeout(() => {
           localStorage.removeItem('userLogin');
-          router.push("/home");
+          
+          // Redirection basée sur le rôle (même logique que dans Login)
+          if (roleName.toLowerCase() === 'admin') {
+            router.push("../home");
+          } else {
+            router.push("/notReady");
+          }
         }, 1500);
 
       } else {

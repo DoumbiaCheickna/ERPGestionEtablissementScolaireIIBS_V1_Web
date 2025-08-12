@@ -6,9 +6,10 @@ import { useState, useEffect } from 'react';
 import Toast from '../../components/ui/Toast';
 import StudentForm from './etudiantForm';
 import TeacherForm from './professeurForm';
+import AdminForm from './adminForm'; 
 
 interface User {
-  classe: string;
+  classe?: string;
   id: number;
   email: string;
   first_login: string;
@@ -37,12 +38,18 @@ interface Filiere {
   libelle: string;
 }
 
+interface Matiere {
+  id: string;
+  libelle: string;
+}
+
 export default function UsersManagement() {
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [niveaux, setNiveaux] = useState<Niveau[]>([]);
   const [filieres, setFilieres] = useState<Filiere[]>([]);
-  const [activeTab, setActiveTab] = useState<'student' | 'teacher'>('student');
+  const [matieres, setMatieres] = useState<Matiere[]>([]);
+  const [activeTab, setActiveTab] = useState<'student' | 'teacher' | 'admin'>('student');
   const [loading, setLoading] = useState(true);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showError, setShowError] = useState(false);
@@ -103,6 +110,15 @@ export default function UsersManagement() {
         libelle: doc.data().libelle
       })) as Filiere[];
       setFilieres(filieresList);
+
+      // Fetch matieres
+      const matieresQuery = query(collection(db, "matieres"));
+      const matieresSnapshot = await getDocs(matieresQuery);
+      const matieresList = matieresSnapshot.docs.map(doc => ({
+        id: doc.id,
+        libelle: doc.data().libelle
+      })) as Matiere[];
+      setMatieres(matieresList);
       
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -116,14 +132,14 @@ export default function UsersManagement() {
   const deleteUser = async (user: User) => {
     if (!user.docId) return;
 
-    if (window.confirm(`Delete user ${user.prenom} ${user.nom}?`)) {
+    if (window.confirm(`Supprimer l'utilisateur ${user.prenom} ${user.nom}?`)) {
       try {
         await deleteDoc(doc(db, "users", user.docId));
-        showSuccessToast('User deleted successfully!');
+        showSuccessToast('Utilisateur supprimé avec succès!');
         await fetchData();
       } catch (error) {
         console.error('Error deleting user:', error);
-        showErrorToast('Error deleting user');
+        showErrorToast('Erreur lors de la suppression');
       }
     }
   };
@@ -144,12 +160,12 @@ export default function UsersManagement() {
         ...editingUser
       });
       
-      showSuccessToast('User updated successfully!');
+      showSuccessToast('Utilisateur modifié avec succès!');
       setEditingUser(null);
       await fetchData();
     } catch (error) {
       console.error('Error updating user:', error);
-      showErrorToast('Error updating user');
+      showErrorToast('Erreur lors de la modification');
     }
   };
 
@@ -170,11 +186,11 @@ export default function UsersManagement() {
       {/* Header */}
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
-          <h2 className="fw-bold text-dark mb-1">User Management</h2>
-          <p className="text-muted mb-0">Manage students and teachers</p>
+          <h2 className="fw-bold text-dark mb-1">Gestion des utilisateurs</h2>
+          <p className="text-muted mb-0">Gérer les étudiants, professeurs et administrateurs</p>
         </div>
         <div className="badge bg-primary fs-6 px-3 py-2">
-          {users.length} user{users.length !== 1 ? 's' : ''}
+          {users.length} utilisateur{users.length !== 1 ? 's' : ''}
         </div>
       </div>
 
@@ -190,7 +206,7 @@ export default function UsersManagement() {
                     onClick={() => setActiveTab('student')}
                   >
                     <i className="bi bi-person-video2 me-2"></i>
-                    Add Student
+                    Ajouter un étudiant
                   </button>
                 </li>
                 <li className="nav-item">
@@ -199,14 +215,23 @@ export default function UsersManagement() {
                     onClick={() => setActiveTab('teacher')}
                   >
                     <i className="bi bi-person-video me-2"></i>
-                    Add Teacher
+                    Ajouter un professeur
+                  </button>
+                </li>
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'admin' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('admin')}
+                  >
+                    <i className="bi bi-person-gear me-2"></i>
+                    Ajouter un administrateur
                   </button>
                 </li>
               </ul>
             </div>
             
             <div className="card-body">
-              {activeTab === 'student' ? (
+              {activeTab === 'student' && (
                 <StudentForm 
                   roles={roles}
                   niveaux={niveaux}
@@ -215,10 +240,19 @@ export default function UsersManagement() {
                   showErrorToast={showErrorToast}
                   fetchData={fetchData}
                 />
-              ) : (
+              )}
+              {activeTab === 'teacher' && (
                 <TeacherForm 
                   roles={roles}
-                  matieres={[]}
+                  matieres={matieres}
+                  showSuccessToast={showSuccessToast}
+                  showErrorToast={showErrorToast}
+                  fetchData={fetchData}
+                />
+              )}
+              {activeTab === 'admin' && (
+                <AdminForm 
+                  roles={roles}
                   showSuccessToast={showSuccessToast}
                   showErrorToast={showErrorToast}
                   fetchData={fetchData}
@@ -235,19 +269,19 @@ export default function UsersManagement() {
               <div className="d-flex justify-content-between align-items-center">
                 <h5 className="card-title mb-0 fw-semibold">
                   <i className="bi bi-people me-2 text-primary"></i>
-                  User List
+                  Liste des utilisateurs
                 </h5>
                 <div className="d-flex">
                   <input
                     type="text"
                     className="form-control me-2"
-                    placeholder="Search users..."
+                    placeholder="Rechercher..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     style={{ width: '200px' }}
                   />
                   <span className="badge bg-light text-dark px-3 py-2">
-                    Showing: {filteredUsers.length}
+                    Affichés: {filteredUsers.length}
                   </span>
                 </div>
               </div>
@@ -256,9 +290,9 @@ export default function UsersManagement() {
             {loading ? (
               <div className="card-body text-center py-5">
                 <div className="spinner-border text-primary" role="status">
-                  <span className="visually-hidden">Loading...</span>
+                  <span className="visually-hidden">Chargement...</span>
                 </div>
-                <p className="text-muted mt-2">Loading users...</p>
+                <p className="text-muted mt-2">Chargement des utilisateurs...</p>
               </div>
             ) : (
               <div className="card-body p-0">
@@ -268,12 +302,12 @@ export default function UsersManagement() {
                       <thead className="table-light">
                         <tr>
                           <th>ID</th>
-                          <th>Name</th>
+                          <th>Nom</th>
                           <th>Email</th>
-                          <th>Username</th>
-                          <th>Role</th>
-                          <th>Class</th>
-                          <th>First Login</th>
+                          <th>Nom d utilisateur</th>
+                          <th>Rôle</th>
+                          <th>Classe</th>
+                          <th>Première connexion</th>
                           <th>Actions</th>
                         </tr>
                       </thead>
@@ -289,12 +323,14 @@ export default function UsersManagement() {
                                     className="form-control form-control-sm mb-1"
                                     value={editingUser.prenom}
                                     onChange={(e) => setEditingUser({...editingUser, prenom: e.target.value})}
+                                    placeholder="Prénom"
                                   />
                                   <input
                                     type="text"
                                     className="form-control form-control-sm"
                                     value={editingUser.nom}
                                     onChange={(e) => setEditingUser({...editingUser, nom: e.target.value})}
+                                    placeholder="Nom"
                                   />
                                 </>
                               ) : (
@@ -339,7 +375,7 @@ export default function UsersManagement() {
                                   ))}
                                 </select>
                               ) : (
-                                roles.find(r => r.id === user.role_id)?.libelle || 'Unknown'
+                                roles.find(r => r.id === user.role_id)?.libelle || 'Inconnu'
                               )}
                             </td>
                             <td>
@@ -347,19 +383,19 @@ export default function UsersManagement() {
                             </td>
                             <td>
                               {user.first_login === '1' ? (
-                                <span className="badge bg-warning text-dark">Yes</span>
+                                <span className="badge bg-warning text-dark">Oui</span>
                               ) : (
-                                <span className="badge bg-success">No</span>
+                                <span className="badge bg-success">Non</span>
                               )}
                             </td>
                             <td>
                               {editingUser?.id === user.id ? (
                                 <div className="btn-group btn-group-sm">
                                   <button className="btn btn-success" onClick={saveEdit}>
-                                    <i className="bi bi-check"></i> Save
+                                    <i className="bi bi-check"></i> Sauvegarder
                                   </button>
                                   <button className="btn btn-secondary" onClick={cancelEdit}>
-                                    <i className="bi bi-x"></i> Cancel
+                                    <i className="bi bi-x"></i> Annuler
                                   </button>
                                 </div>
                               ) : (
@@ -368,13 +404,13 @@ export default function UsersManagement() {
                                     className="btn btn-outline-primary" 
                                     onClick={() => startEdit(user)}
                                   >
-                                    <i className="bi bi-pencil"></i> Edit
+                                    <i className="bi bi-pencil"></i> Modifier
                                   </button>
                                   <button 
                                     className="btn btn-outline-danger" 
                                     onClick={() => deleteUser(user)}
                                   >
-                                    <i className="bi bi-trash"></i> Delete
+                                    <i className="bi bi-trash"></i> Supprimer
                                   </button>
                                 </div>
                               )}
@@ -387,11 +423,11 @@ export default function UsersManagement() {
                 ) : (
                   <div className="text-center py-5">
                     <i className="bi bi-people text-muted" style={{ fontSize: '3rem' }}></i>
-                    <h5 className="text-muted mt-3">No users found</h5>
+                    <h5 className="text-muted mt-3">Aucun utilisateur trouvé</h5>
                     {searchTerm ? (
-                      <p className="text-muted">Try a different search term</p>
+                      <p className="text-muted">Essayez un autre terme de recherche</p>
                     ) : (
-                      <p className="text-muted">Add your first user using the form above</p>
+                      <p className="text-muted">Ajoutez votre premier utilisateur avec le formulaire ci-dessus</p>
                     )}
                   </div>
                 )}

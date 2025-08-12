@@ -1,6 +1,6 @@
 'use client';
 
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs, query, where, doc, getDoc } from "firebase/firestore";
 import { db, auth } from '../../../../../firebaseConfig'; 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -17,6 +17,7 @@ export default function Login() {
   const [showSuccess, setShowSuccess] = useState<boolean>(false);
   const [showError, setShowError] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
 
   const router = useRouter();
 
@@ -32,6 +33,7 @@ export default function Login() {
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setLoading(true);
 
     try {
       // Requête Firestore pour récupérer l'utilisateur avec login et password
@@ -48,16 +50,38 @@ export default function Login() {
         const userDoc = querySnapshot.docs[0].data();
         const email = userDoc.email;
         const firstLogin = userDoc.first_login;
+        const roleId = userDoc.role_id;
 
+        // Récupérer les informations du rôle
+        const roleDoc = await getDoc(doc(db, "roles", roleId));
+        const roleData = roleDoc.data();
+        const roleName = roleData?.libelle || '';
+        console.log("Role Name:", roleName);
 
         // Stocker le login dans localStorage pour la page de changement de mot de passe
         localStorage.setItem('userLogin', username);
+        localStorage.setItem('userRole', roleName);
+
+        // Vérifier le rôle et first_login pour déterminer la redirection
+        const isAdmin = roleName.toLowerCase() === 'admin';
+        
+        // Si non-admin et pas première connexion, aller vers notReady
+        if (!isAdmin && firstLogin == 0) {
+          showErrorToast("Accès limité. Redirection vers la page d'information...");
+          setTimeout(() => {
+            router.push("/notReady");
+          }, 2000);
+          setLoading(false);
+          return;
+        }
+
+        // Si non-admin et première connexion, ils doivent changer le mot de passe mais iront vers notReady après
+        // Les admins peuvent procéder normalement
 
         try {
           // Essayer de créer le compte Firebase Auth (si existe déjà, ça va planter)
           await createUserWithEmailAndPassword(auth, email, password);
           showSuccessToast("Compte créé et connecté !");
-          router.push("/admin/home");
         } catch (error: unknown) {
           if (
             typeof error === "object" &&
@@ -72,11 +96,13 @@ export default function Login() {
             } catch (signInError: unknown) {
               showErrorToast("Erreur de connexion, veuillez vérifier vos identifiants.");
               console.error(signInError);
+              setLoading(false);
               return;
             }
           } else {
             showErrorToast("Erreur lors de la création du compte.");
             console.error(error);
+            setLoading(false);
             return;
           }
         }
@@ -97,6 +123,8 @@ export default function Login() {
     } catch (error) {
       console.error(error);
       showErrorToast("Erreur serveur, veuillez réessayer plus tard.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -121,6 +149,7 @@ export default function Login() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
+                disabled={loading}
               />
             </div>
 
@@ -134,6 +163,7 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                disabled={loading}
               />
             </div>
 
@@ -142,8 +172,16 @@ export default function Login() {
                 className="btn btn-dark border fw-semibold mt-3 py-3"
                 style={{ borderRadius: '15px', color: 'white'}}
                 type="submit"
+                disabled={loading}
               >
-                Log In
+                {loading ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    Connexion...
+                  </>
+                ) : (
+                  'Log In'
+                )}
               </button>
             </div>
 
