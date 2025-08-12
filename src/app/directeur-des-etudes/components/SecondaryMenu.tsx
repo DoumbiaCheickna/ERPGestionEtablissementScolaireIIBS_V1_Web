@@ -9,59 +9,96 @@ type MainItem =
   | "Etudiants"
   | "Professeurs"
   | "Filières"
-  | "Evaluations"
-  | null;
+  | "Evaluations";
 
-const menus: Record<Exclude<MainItem, null>, { label: string; href?: string }[]> = {
+type Item = { key: string; label: string };
+
+const DEFAULT_BY_MAIN: Partial<Record<MainItem, Item[]>> = {
   Accueil: [
-    { label: "Vue d’ensemble" },
-    { label: "Statistiques clés" },
-    { label: "Activités récentes" },
-  ],
-  Emargements: [
-    { label: "Feuilles du jour" },
-    { label: "Historique" },
-    { label: "Validation" },
+    { key: "stats", label: "Statistiques" },
+    { key: "rapports", label: "Rapports" },
   ],
   Etudiants: [
-    { label: "Liste" },
-    { label: "Inscriptions" },
-    { label: "Groupes / Classes" },
+    { key: "liste", label: "Liste" },
+    { key: "import", label: "Import" },
   ],
-  Professeurs: [
-    { label: "Liste" },
-    { label: "Affectations" },
-    { label: "Disponibilités" },
-  ],
-  "Filières": [
-    { label: "Catalogue" },
-    { label: "Unités d’enseignement" },
-    { label: "Programmes" },
+  Emargements: [
+    { key: "liste", label: "Feuilles" },
+    { key: "historique", label: "Historique" },
   ],
   Evaluations: [
-    { label: "Contrôles" },
-    { label: "Notes" },
-    { label: "Rapports" },
+    { key: "examens", label: "Examens" },
+    { key: "notes", label: "Notes" },
   ],
+  // "Professeurs" et "Filières" gérés ailleurs
 };
 
-export default function SecondaryMenu({ active }: { active: MainItem }) {
-  if (!active || active === "Accueil") return null;
-  const items = menus[active];
+export default function SecondaryMenu({
+  active,
+  items,
+  onChange,
+  layout = "vertical",
+  selectedKey,
+}: {
+  /** Vue principale (optionnel si vous passez items) */
+  active?: MainItem | string | null;
+  /** Liste d’items explicite (ex: pour la page Classe) */
+  items?: Item[];
+  /** Item actuellement sélectionné (ex: "matieres") */
+  selectedKey?: string;
+  /** Callback au clic */
+  onChange?: (key: string) => void;
+  /** Disposition: "vertical" (par défaut) ou "horizontal" */
+  layout?: "vertical" | "horizontal";
+}) {
+  const list: Item[] =
+    items ??
+    (active && DEFAULT_BY_MAIN[active as MainItem]
+      ? DEFAULT_BY_MAIN[active as MainItem]!
+      : []);
+
+  if (!list.length) return null;
+
+  if (layout === "horizontal") {
+    // Barre horizontale (nav pills)
+    return (
+      <nav className="border-bottom mb-2">
+        <ul className="nav nav-pills gap-2 py-2 flex-row">
+          {list.map((it) => {
+            const isActive = selectedKey === it.key;
+            return (
+              <li key={it.key} className="nav-item">
+                <button
+                  className={`btn ${isActive ? "btn-primary" : "btn-light"}`}
+                  onClick={() => onChange?.(it.key)}
+                >
+                  {it.label}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    );
+  }
+
+  // Menu vertical (par défaut)
   return (
-    <aside className="border-end bg-white" style={{ width: 260, minHeight: "calc(100vh - 64px)" }}>
-      <div className="p-3 border-bottom">
-        <strong className="text-uppercase small text-muted">Menu {active}</strong>
-      </div>
-      <ul className="list-group list-group-flush">
-        {items.map((it, idx) => (
-          <li key={idx} className="list-group-item d-flex align-items-center">
-            <i className="bi bi-chevron-right me-2"></i>
-            <a href={it.href ?? "#"} className="text-decoration-none text-body">
-              {it.label}
-            </a>
-          </li>
-        ))}
+    <aside className="border-end pe-3 me-3" style={{ width: 260, minWidth: 260 }}>
+      <ul className="nav flex-column gap-1 py-3">
+        {list.map((it) => {
+          const isActive = selectedKey === it.key;
+          return (
+            <li key={it.key}>
+              <button
+                className={`btn w-100 text-start ${isActive ? "btn-primary" : "btn-light"}`}
+                onClick={() => onChange?.(it.key)}
+              >
+                {it.label}
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </aside>
   );

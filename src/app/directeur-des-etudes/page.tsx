@@ -6,6 +6,7 @@ import AdminNavbar from "./components/AdminNavbar";
 import SecondaryMenu from "./components/SecondaryMenu";
 import HomeDashboard from "./components/HomeDashboard";
 import ProfessorsPage from "./components/ProfessorsPage";
+import FilieresPage from "./components/FilieresPage";
 
 type MainItem =
   | "Accueil"
@@ -19,7 +20,11 @@ type MainItem =
 export default function DirecteurHomePage() {
   const [active, setActive] = React.useState<MainItem>("Accueil");
 
-  const showSecondary = active !== "Professeurs";
+  // src/app/directeur-des-etudes/page.tsx
+
+  const HIDE_SECONDARY: Exclude<MainItem, null>[] = ["Accueil", "Professeurs", "Filières"];
+  const showSecondary = active !== null && !HIDE_SECONDARY.includes(active);
+
 
   return (
     <div className="d-flex flex-column flex-grow-1">
@@ -31,9 +36,14 @@ export default function DirecteurHomePage() {
 
           {active === "Professeurs" && <ProfessorsPage />}
 
+          {/* ⬇️ Affiche la vue Filières */}
+          {active === "Filières" && <FilieresPage />}
+
+          {/* Placeholder pour les autres onglets */}
           {active &&
             active !== "Accueil" &&
-            active !== "Professeurs" && (
+            active !== "Professeurs" &&
+            active !== "Filières" && (
               <div className="card shadow-sm">
                 <div className="card-body">
                   <h5 className="card-title mb-3">{active}</h5>
