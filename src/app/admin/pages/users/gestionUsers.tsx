@@ -8,6 +8,7 @@ import StudentForm from './etudiantForm';
 import TeacherForm from './professeurForm';
 import AdminForm from './adminForm'; 
 import ResponsableFinancierForm from "./respoFinancierForm";
+import DirectorForm from './directeurForm';
 
 interface User {
   classe?: string;
@@ -57,7 +58,7 @@ export default function UsersManagement() {
   const [filieres, setFilieres] = useState<Filiere[]>([]);
   const [matieres, setMatieres] = useState<Matiere[]>([]);
   const [partenaires, setPartenaires] = useState<Partenaire[]>([]); 
-  const [activeTab, setActiveTab] = useState<'student' | 'teacher' | 'admin' | 'responsable-financier'>('student');
+  const [activeTab, setActiveTab] = useState<'student' | 'teacher' | 'admin' | 'responsable-financier' | 'director'>('student');
   const [loading, setLoading] = useState(true);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showError, setShowError] = useState(false);
@@ -259,6 +260,15 @@ export default function UsersManagement() {
                     Ajouter un responsable financier
                   </button>
                 </li>
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'director' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('director')}
+                  >
+                    <i className="bi bi-mortarboard me-2"></i>
+                    Ajouter un Directeur des Études
+                  </button>
+                </li>
               </ul>
             </div>
             
@@ -285,6 +295,14 @@ export default function UsersManagement() {
               )}
               {activeTab === 'admin' && (
                 <AdminForm 
+                  roles={roles}
+                  showSuccessToast={showSuccessToast}
+                  showErrorToast={showErrorToast}
+                  fetchData={fetchData}
+                />
+              )}
+               {activeTab === 'director' && (
+                <DirectorForm
                   roles={roles}
                   showSuccessToast={showSuccessToast}
                   showErrorToast={showErrorToast}

@@ -23,7 +23,7 @@ export default function AdminForm({
     nom: '',
     prenom: '',
     password: '',
-    role_id: '',
+    role_id: '',        // <- sélectionnée dans le <select>
     first_login: '1'
   });
 
@@ -32,32 +32,33 @@ export default function AdminForm({
     try {
       // Validation des champs obligatoires
       if (!adminForm.nom || !adminForm.prenom || !adminForm.email || 
-          !adminForm.login || !adminForm.password) {
+          !adminForm.login || !adminForm.password || !adminForm.role_id) {
         showErrorToast('Veuillez remplir tous les champs obligatoires');
         return;
       }
 
-      // Trouver le rôle Admin automatiquement
-      const adminRole = roles.find(r => r.libelle.toLowerCase().includes('admin'));
-      if (!adminRole) {
-        showErrorToast('Rôle administrateur non trouvé');
+      // Récupérer le libellé du rôle choisi pour le stocker sur l'utilisateur
+      const selectedRole = roles.find(r => r.id === adminForm.role_id);
+      if (!selectedRole) {
+        showErrorToast('Rôle sélectionné invalide');
         return;
       }
 
-      // Générer un nouvel ID séquentiel
+      // Générer un nouvel ID séquentiel (simple, même logique que le reste du projet)
       const usersSnapshot = await getDocs(collection(db, "users"));
       const newUserId = usersSnapshot.size + 1;
 
-      // Ajouter l'administrateur à la collection users
+      // Ajouter l'utilisateur (administrateur ou autre selon le select)
       await addDoc(collection(db, "users"), {
         ...adminForm,
         id: newUserId,
-        role_id: adminRole.id // Assigner automatiquement le rôle admin
+        role_id: adminForm.role_id,
+        role_libelle: selectedRole.libelle, // ✅ utile pour la redirection côté login
       });
 
-      showSuccessToast('Administrateur ajouté avec succès!');
+      showSuccessToast('Utilisateur ajouté avec succès !');
       
-      // Réinitialiser le formulaire
+      // Reset form
       setAdminForm({
         email: '',
         login: '',
@@ -70,20 +71,17 @@ export default function AdminForm({
 
       await fetchData();
     } catch (error) {
-      console.error('Erreur lors de l\'ajout de l\'administrateur:', error);
-      showErrorToast('Erreur lors de l\'ajout de l\'administrateur');
+      console.error('Erreur lors de l\'ajout de l\'utilisateur:', error);
+      showErrorToast('Erreur lors de l\'ajout de l\'utilisateur');
     }
   };
-
-  // Trouver le rôle admin pour l'affichage
-  const adminRole = roles.find(r => r.libelle.toLowerCase().includes('admin'));
 
   return (
     <form onSubmit={handleAdminSubmit}>
       <div className="row g-3">
         {/* Informations de base */}
         <div className="col-12">
-          <h5 className="fw-bold">Informations de l administrateur</h5>
+          <h5 className="fw-bold">Informations de l&apos;utilisateur (profil administrateur)</h5>
           <hr />
         </div>
 
@@ -124,7 +122,7 @@ export default function AdminForm({
         </div>
 
         <div className="col-md-6">
-          <label className="form-label">Nom d utilisateur*</label>
+          <label className="form-label">Nom d&apos;utilisateur*</label>
           <input
             type="text"
             className="form-control"
@@ -148,30 +146,36 @@ export default function AdminForm({
           />
         </div>
 
+        {/* Sélection du rôle (dynamique depuis Firestore) */}
         <div className="col-md-6">
-          <label className="form-label">Rôle</label>
-          <input
-            type="text"
-            className="form-control"
-            value={adminRole ? adminRole.libelle : 'Admin'}
-            disabled
-            style={{ backgroundColor: '#f8f9fa', cursor: 'not-allowed' }}
-          />
-          <small className="text-muted">Le rôle est automatiquement défini sur Administrateur</small>
+          <label className="form-label">Rôle*</label>
+          <select
+            className="form-select"
+            value={adminForm.role_id}
+            onChange={(e) => setAdminForm({ ...adminForm, role_id: e.target.value })}
+            required
+          >
+            <option value="">Sélectionner un rôle</option>
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.libelle}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Information sur la première connexion */}
         <div className="col-12">
           <div className="alert alert-info">
             <i className="bi bi-info-circle me-2"></i>
-            <strong>Note:</strong> La première connexion sera automatiquement définie pour forcer le changement de mot de passe lors de la première connexion.
+            <strong>Note:</strong> La première connexion est définie à 1 pour forcer le changement de mot de passe.
           </div>
         </div>
 
         <div className="col-12 mt-4">
           <button type="submit" className="btn btn-primary px-4">
             <i className="bi bi-plus-lg me-2"></i>
-            Ajouter l administrateur
+            Ajouter l&apos;utilisateur
           </button>
         </div>
       </div>

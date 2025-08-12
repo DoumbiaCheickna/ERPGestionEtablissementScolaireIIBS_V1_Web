@@ -16,6 +16,7 @@ import { updatePassword } from 'firebase/auth';
 import { db, auth } from '../../../../../firebaseConfig';
 import Logo from '../../assets/iibs_logo.png';
 import Toast from '../../components/ui/Toast';
+import { routeForRole } from '@/lib/roleRouting';
 
 export default function ChangePassword() {
   const router = useRouter();
@@ -31,15 +32,8 @@ export default function ChangePassword() {
   const [showError, setShowError] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
 
-  const showSuccessToast = (msg: string) => {
-    setToastMessage(msg);
-    setShowSuccess(true);
-  };
-
-  const showErrorToast = (msg: string) => {
-    setToastMessage(msg);
-    setShowError(true);
-  };
+  const showSuccessToast = (msg: string) => { setToastMessage(msg); setShowSuccess(true); };
+  const showErrorToast   = (msg: string) => { setToastMessage(msg); setShowError(true); };
 
   /**
    * Pré-check avant d’afficher la page :
@@ -67,15 +61,21 @@ export default function ChangePassword() {
         const userDoc = snap.docs[0];
         const userData = userDoc.data() as any;
 
-        // Si déjà traité (first_login == 0), on envoie l’utilisateur à sa destination
+        // Déjà traité → route d’accueil suivant le rôle
         if (userData.first_login === 0 || userData.first_login === '0') {
-          const roleDoc = await getDoc(doc(db, 'roles', userData.role_id));
-          const roleName = (roleDoc.data()?.libelle || '').toLowerCase();
-          if (roleName === 'admin') {
-            router.replace('/admin/home');
-          } else {
-            router.replace('/notReady');
-          }
+          // on essaye d'abord role_libelle (si stocké sur le user)
+          const roleLabel =
+            userData.role_libelle ||
+            (await (async () => {
+              try {
+                const r = await getDoc(doc(db, 'roles', String(userData.role_id)));
+                return r.data()?.libelle || '';
+              } catch {
+                return '';
+              }
+            })());
+
+          router.replace(routeForRole(roleLabel));
           return;
         }
 
@@ -119,7 +119,7 @@ export default function ChangePassword() {
 
       // Mettre à jour Firestore
       await updateDoc(userDocRef, {
-        password: password, // ⚠️ idéalement, ne pas stocker en clair (voir nos recommandations)
+        password: password, // ⚠️ en prod, ne stocke pas en clair
         first_login: 0,
       });
 
@@ -130,9 +130,7 @@ export default function ChangePassword() {
         } catch (err: any) {
           console.error('Erreur updatePassword:', err);
           if (err?.code === 'auth/requires-recent-login') {
-            showErrorToast(
-              'Veuillez vous reconnecter pour changer le mot de passe.'
-            );
+            showErrorToast('Veuillez vous reconnecter pour changer le mot de passe.');
             router.replace('/admin/auth/login');
             return;
           }
@@ -141,20 +139,24 @@ export default function ChangePassword() {
 
       showSuccessToast('Mot de passe changé avec succès !');
 
-      // Rôle & redirection
-      const roleDoc = await getDoc(doc(db, 'roles', userData.role_id));
-      const roleName = (roleDoc.data()?.libelle || '').toLowerCase();
+      // Rôle & redirection (on privilégie role_libelle, sinon on résout via roles)
+      const roleLabel =
+        userData.role_libelle ||
+        (await (async () => {
+          try {
+            const roleSnap = await getDoc(doc(db, 'roles', String(userData.role_id)));
+            return roleSnap.data()?.libelle || '';
+          } catch {
+            return '';
+          }
+        })());
 
-      // Nettoyer le localStorage
+      // Nettoyer le localStorage (optionnel)
       localStorage.removeItem('userLogin');
-      localStorage.removeItem('userRole');
+      localStorage.setItem('userRole', roleLabel || '');
 
       setTimeout(() => {
-        if (roleName === 'admin') {
-          router.replace('/admin/home');
-        } else {
-          router.replace('/notReady');
-        }
+        router.replace(routeForRole(roleLabel));
       }, 800);
     } catch (error) {
       console.error(error);
@@ -162,7 +164,6 @@ export default function ChangePassword() {
     }
   };
 
-  // Loader pendant le pré-check pour éviter tout “flash”
   if (checking) {
     return (
       <div className="min-vh-100 d-flex align-items-center justify-content-center">
@@ -211,10 +212,7 @@ export default function ChangePassword() {
               </div>
 
               <div className="mb-3">
-                <label
-                  htmlFor="confirmPassword"
-                  className="form-label fw-semibold"
-                >
+                <label htmlFor="confirmPassword" className="form-label fw-semibold">
                   Confirmer le mot de passe
                 </label>
                 <input

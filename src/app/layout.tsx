@@ -6,8 +6,10 @@ import { auth } from '../../firebaseConfig';
 import { useRouter, usePathname } from 'next/navigation';
 import Navbar from './admin/components/layout/Navbar';
 import 'bootstrap/dist/css/bootstrap.min.css';
+import { routeForRole } from '@/lib/roleRouting';
+import 'bootstrap-icons/font/bootstrap-icons.css';
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -18,28 +20,30 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       setUser(currentUser);
       setLoading(false);
 
-      // Define auth paths (login, change password)
-      const authPaths = ['/auth/login', '/auth/change-password'];
+      // chemins d'auth complets (dans /admin)
+      const authPaths = ['/admin/auth/login', '/admin/auth/change-password'];
       const isAuthPath = authPaths.includes(pathname) || pathname === '/';
-      
-      // Define public paths (notReady page)
-      const publicPaths = ['/notReady'];
-      const isPublicPath = publicPaths.includes(pathname);
 
-      // Redirect root to login
+      // 1) Rediriger la racine vers login
       if (pathname === '/') {
         router.push('/admin/auth/login');
         return;
       }
 
-      // Redirect authenticated users away from login page
-      if (currentUser && pathname.includes('/auth/login')) {
-        router.push('/admin/home');
+      // 2) Si déjà connecté et sur la page login → envoyer selon le rôle
+      if (currentUser && pathname === '/admin/auth/login') {
+        try {
+          const storedRole = (typeof window !== 'undefined' && localStorage.getItem('userRole')) || '';
+          const target = routeForRole(storedRole) || '/admin/home';
+          router.replace(target);
+        } catch {
+          router.replace('/admin/home');
+        }
         return;
       }
 
-      // Redirect unauthenticated users to login (except auth and public paths)
-      if (!currentUser && !isAuthPath && !isPublicPath) {
+      // 3) Si pas connecté et pas sur une page d'auth → forcer login
+      if (!currentUser && !isAuthPath) {
         router.push('/admin/auth/login');
         return;
       }
@@ -48,10 +52,18 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, [router, pathname]);
 
-  // Show loading spinner
+  // Loader initial pendant la détection auth
   if (loading) {
     return (
-      <html lang="en">
+      <html lang="fr">
+        <head>
+          {/* ... */}
+          <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
+            rel="stylesheet"
+          />
+        </head>
+
         <body>
           <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
             <div className="text-center">
@@ -66,17 +78,22 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  // Define paths where navbar should be hidden
-  const hideNavbarPaths = ['/auth/login', '/auth/change-password', '/', '/notReady'];
-  const shouldShowNavbar = user && !hideNavbarPaths.includes(pathname);
+  // --- Affichage navbar ---
+  // On veut la navbar admin uniquement sur les pages /admin (sauf login & change-password)
+  // et jamais sur /directeur-des-etudes
+  const isDirectorArea = pathname.startsWith('/directeur-des-etudes');
+  const authPaths = ['/admin/auth/login', '/admin/auth/change-password'];
+  const showAdminNavbar =
+    !!user &&
+    pathname.startsWith('/admin') &&
+    !authPaths.includes(pathname) &&
+    !isDirectorArea;
 
   return (
-    <html lang="en">
+    <html lang="fr">
       <body>
-        {shouldShowNavbar && <Navbar />}
-        <main>
-          {children}
-        </main>
+        {showAdminNavbar && <Navbar />}
+        <main>{children}</main>
       </body>
     </html>
   );
