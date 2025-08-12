@@ -5,7 +5,6 @@ import Link from 'next/link';
 import React from 'react';
 import RolesPage from '../pages/roles/page';
 import UsersManagement from '../pages/users/gestionUsers';
-import GestionModule from './modules/gestionModulesForm';
 
 // Import your form components
 
@@ -40,7 +39,6 @@ export default function RenderHome() {
             <p className="text-secondary">
               Manage teacher information, assign subjects, and track schedules.
             </p>
-            <GestionModule />
           </>
         );
       default:
