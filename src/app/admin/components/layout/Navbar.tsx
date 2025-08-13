@@ -27,7 +27,7 @@ export default function RenderNav() {
             <ul className="navbar-nav">
                 <li className="nav-item">
                 {/* Rôles doit emmener “là où on a Role Management” → ta page roles */}
-                <Link href="/admin/pages/roles" className="nav-link">Rôles</Link>
+                <Link href="/admin/home" className="nav-link">Rôles</Link>
                 </li>
             </ul>
             </div>

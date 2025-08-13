@@ -26,21 +26,20 @@ export default function DirecteurHomePage() {
   const showSecondary = active !== null && !HIDE_SECONDARY.includes(active);
 
 
-  return (
+ return (
     <div className="d-flex flex-column flex-grow-1">
       <AdminNavbar active={active} onChange={setActive} />
       <div className="d-flex flex-grow-1">
         {showSecondary && <SecondaryMenu active={active} />}
-        <main className="flex-grow-1 p-3">
-          {active === "Accueil" && <HomeDashboard />}
+        
+        <main className="flex-grow-1 p-3" style={{ maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
+          {/* ⬇️ Affiche la vue Filières */}      
+          <div className="container-fluid px-4 py-3">
+            {active === "Accueil" && <HomeDashboard />}
+            {active === "Professeurs" && <ProfessorsPage />}
+            {active === "Filières" && <FilieresPage />}
 
-          {active === "Professeurs" && <ProfessorsPage />}
-
-          {/* ⬇️ Affiche la vue Filières */}
-          {active === "Filières" && <FilieresPage />}
-
-          {/* Placeholder pour les autres onglets */}
-          {active &&
+          {/* Placeholder pour les autres onglets */}            {active &&
             active !== "Accueil" &&
             active !== "Professeurs" &&
             active !== "Filières" && (
@@ -48,12 +47,12 @@ export default function DirecteurHomePage() {
                 <div className="card-body">
                   <h5 className="card-title mb-3">{active}</h5>
                   <p className="text-muted mb-0">
-                    Contenu placeholder pour <strong>{active}</strong>. Les
-                    données seront branchées plus tard (Firestore/Auth).
+                    Contenu placeholder pour <strong>{active}</strong>
                   </p>
                 </div>
               </div>
-            )}
+              )}
+          </div>
         </main>
       </div>
     </div>

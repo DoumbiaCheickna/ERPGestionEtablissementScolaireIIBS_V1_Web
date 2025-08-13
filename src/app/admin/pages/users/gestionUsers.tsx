@@ -9,6 +9,7 @@ import TeacherForm from './professeurForm';
 import AdminForm from './adminForm'; 
 import ResponsableFinancierForm from "./respoFinancierForm";
 import DirectorForm from './directeurForm';
+import UserViewModal from './userModalView';
 
 interface User {
   classe?: string;
@@ -65,6 +66,8 @@ export default function UsersManagement() {
   const [toastMessage, setToastMessage] = useState('');
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [viewingUser, setViewingUser] = useState<User | null>(null);
+  const [showViewModal, setShowViewModal] = useState(false);
 
   // Toast helpers
   const showSuccessToast = (msg: string) => {
@@ -77,6 +80,23 @@ export default function UsersManagement() {
     setToastMessage(msg);
     setShowError(true);
     setTimeout(() => setShowError(false), 3000);
+  };
+
+  // View user function
+  const viewUser = (user: User) => {
+    setViewingUser(user);
+    setShowViewModal(true);
+  };
+
+  const closeViewModal = () => {
+    setViewingUser(null);
+    setShowViewModal(false);
+  };
+
+  // Clear filters function
+  const clearFilters = () => {
+    setSearchTerm('');
+    setSelectedRole('');
   };
 
   // Fetch all necessary data
@@ -187,19 +207,18 @@ export default function UsersManagement() {
     }
   };
 
-  // Filter users based on search term
-  const filteredUsers = users.filter(user => {
-    const matchesSearch =
-      user.nom.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.prenom.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.login.toLowerCase().includes(searchTerm.toLowerCase());
+  // Filter users based on search term and role-const filteredUsers = users.filter(user => {
+ const filteredUsers = users.filter(user => {
+     const matchesSearch = !searchTerm || 
+       user.nom.toLowerCase().includes(searchTerm.toLowerCase()) ||
+       user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+       user.login.toLowerCase().includes(searchTerm.toLowerCase());
+ 
+     const matchesRole = !selectedRole || user.role_id === selectedRole;
 
-    const matchesRole = selectedRole ? user.role_id === selectedRole : true;
 
-    return matchesSearch && matchesRole;
-  });
-
+     return matchesSearch && matchesRole;
+});
 
   useEffect(() => {
     fetchData();
@@ -331,19 +350,32 @@ export default function UsersManagement() {
                   Liste des utilisateurs
                 </h5>
                 
-               <div className="d-flex">
-                  <input
-                    type="text"
-                    className="form-control me-2"
-                    placeholder="Rechercher..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    style={{ width: '200px' }}
-                  />
+                <div className="d-flex align-items-center gap-2">
+                  <div className="input-group" style={{ width: '250px' }}>
+                    <span className="input-group-text bg-white border-end-0">
+                      <i className="bi bi-search text-muted"></i>
+                    </span>
+                    <input
+                      type="text"
+                      className="form-control border-start-0"
+                      placeholder="Rechercher..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                    {searchTerm && (
+                      <button 
+                        className="btn btn-outline-secondary border-start-0" 
+                        type="button"
+                        onClick={() => setSearchTerm('')}
+                      >
+                        <i className="bi bi-x"></i>
+                      </button>
+                    )}
+                  </div>
 
                   <select
-                    className="form-select me-2"
-                    style={{ width: '180px' }}
+                    className="form-select"
+                    style={{ width: '200px' }}
                     value={selectedRole}
                     onChange={(e) => setSelectedRole(e.target.value)}
                   >
@@ -355,11 +387,22 @@ export default function UsersManagement() {
                     ))}
                   </select>
 
-                  <span className="badge bg-light text-dark px-3 py-2">
-                    Affichés: {filteredUsers.length}
+                  {(searchTerm || selectedRole) && (
+                    <button 
+                      className="btn btn-outline-warning"
+                      onClick={clearFilters}
+                      title="Effacer les filtres"
+                    >
+                      <i className="bi bi-filter-circle-fill me-1"></i>
+                      Effacer
+                    </button>
+                  )}
+
+                  <span className="badge bg-light text-dark px-3 py-2 border">
+                    <i className="bi bi-eye me-1"></i>
+                    {filteredUsers.length} sur {users.length}
                   </span>
                 </div>
-
               </div>
             </div>
             
@@ -389,7 +432,7 @@ export default function UsersManagement() {
                       </thead>
                       <tbody>
                         {filteredUsers.map((user) => (
-                          <tr key={user.id}>
+                          <tr key={user.docId}>
                             <td>#{user.id}</td>
                             <td>
                               {editingUser?.id === user.id ? (
@@ -468,25 +511,34 @@ export default function UsersManagement() {
                               {editingUser?.id === user.id ? (
                                 <div className="btn-group btn-group-sm">
                                   <button className="btn btn-success" onClick={saveEdit}>
-                                    <i className="bi bi-check"></i> Sauvegarder
+                                    <i className="bi bi-check"></i>
                                   </button>
                                   <button className="btn btn-secondary" onClick={cancelEdit}>
-                                    <i className="bi bi-x"></i> Annuler
+                                    <i className="bi bi-x"></i>
                                   </button>
                                 </div>
                               ) : (
                                 <div className="btn-group btn-group-sm">
                                   <button 
+                                    className="btn btn-outline-info" 
+                                    onClick={() => viewUser(user)}
+                                    title="Voir les détails"
+                                  >
+                                    <i className="bi bi-eye"></i>
+                                  </button>
+                                  <button 
                                     className="btn btn-outline-primary" 
                                     onClick={() => startEdit(user)}
+                                    title="Modifier"
                                   >
-                                    <i className="bi bi-pencil"></i> Modifier
+                                    <i className="bi bi-pencil"></i>
                                   </button>
                                   <button 
                                     className="btn btn-outline-danger" 
                                     onClick={() => deleteUser(user)}
+                                    title="Supprimer"
                                   >
-                                    <i className="bi bi-trash"></i> Supprimer
+                                    <i className="bi bi-trash"></i>
                                   </button>
                                 </div>
                               )}
@@ -500,8 +552,14 @@ export default function UsersManagement() {
                   <div className="text-center py-5">
                     <i className="bi bi-people text-muted" style={{ fontSize: '3rem' }}></i>
                     <h5 className="text-muted mt-3">Aucun utilisateur trouvé</h5>
-                    {searchTerm ? (
-                      <p className="text-muted">Essayez un autre terme de recherche</p>
+                    {searchTerm || selectedRole ? (
+                      <div>
+                        <p className="text-muted">Aucun résultat pour les filtres appliqués</p>
+                        <button className="btn btn-outline-primary btn-sm" onClick={clearFilters}>
+                          <i className="bi bi-arrow-clockwise me-1"></i>
+                          Effacer les filtres
+                        </button>
+                      </div>
                     ) : (
                       <p className="text-muted">Ajoutez votre premier utilisateur avec le formulaire ci-dessus</p>
                     )}
@@ -512,6 +570,15 @@ export default function UsersManagement() {
           </div>
         </div>
       </div>
+
+      {/* User View Modal */}
+      <UserViewModal 
+        user={viewingUser}
+        roles={roles}
+        show={showViewModal}
+        onClose={closeViewModal}
+        onEdit={startEdit}
+      />
 
       {/* Toasts */}
       <Toast 

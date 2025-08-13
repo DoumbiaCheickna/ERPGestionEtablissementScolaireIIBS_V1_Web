@@ -7,5 +7,9 @@ export const metadata: Metadata = {
 };
 
 export default function DirecteurLayout({ children }: { children: React.ReactNode }) {
-  return <div className="min-vh-100 d-flex flex-column">{children}</div>;
+  return (
+    <div className="min-vh-100 d-flex flex-column">
+      {children}
+    </div>
+  );
 }

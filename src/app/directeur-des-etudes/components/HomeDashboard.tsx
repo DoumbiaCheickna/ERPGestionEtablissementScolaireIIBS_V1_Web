@@ -109,7 +109,7 @@ export default function HomeDashboard() {
   }, [year]);
 
   return (
-    <div className="container-fluid px-0">
+    <div className="container-fluid px-0 mt-5">
       {/* Entête + sélecteur d'année */}
       <div className="d-flex flex-wrap align-items-center justify-content-between mb-4">
         <div>

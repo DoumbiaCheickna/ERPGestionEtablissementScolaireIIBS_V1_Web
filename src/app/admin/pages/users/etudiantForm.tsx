@@ -545,8 +545,8 @@ export default function StudentForm({
             onChange={(e) => setStudentForm({...studentForm, type_inscription: e.target.value})}
           >
             <option value="">Sélectionner</option>
-            <option value="Nouveau">Nouveau</option>
-            <option value="Redoublant">Redoublant</option>
+            <option value="Nouveau">Inscription</option>
+            <option value="Redoublant">Reinscription</option>
             <option value="Transfert">Transfert</option>
           </select>
         </div>
@@ -591,15 +591,21 @@ export default function StudentForm({
         </div>
         <div className="col-md-4">
           <label className="form-label">Mention</label>
-          <input
-            type="text"
-            className="form-control"
+          <select
+            className="form-select"
             value={studentForm.diplome_obtenu.mention}
-            onChange={(e) => setStudentForm({
+             onChange={(e) => setStudentForm({
               ...studentForm,
               diplome_obtenu: { ...studentForm.diplome_obtenu, mention: e.target.value }
             })}
-          />
+          >
+            <option value="">Sélectionner</option>
+            <option value="Passable">Passable</option>
+            <option value="Assez-bien">Assez-bien</option>
+            <option value="Bien">Bien</option>
+            <option value="Très-Bien">Très-Bien</option>
+            <option value="Excellent">Excellent</option>
+          </select>
         </div>
 
         {/* Bourse */}

@@ -33,14 +33,7 @@ export default function RenderHome() {
             <UsersManagement />
           </>
         );
-      case 'modules':
-        return (
-          <>
-            <p className="text-secondary">
-              Manage teacher information, assign subjects, and track schedules.
-            </p>
-          </>
-        );
+
       default:
         return null;
     }
@@ -67,15 +60,6 @@ export default function RenderHome() {
             onClick={() => setActiveTab('users')}
           >
             Users Management
-          </button>
-        </li>
-
-        <li className="nav-item">
-          <button
-            className={`nav-link fw-semibold ${activeTab === 'modules' ? 'active' : 'text-secondary'}`}
-            onClick={() => setActiveTab('modules')}
-          >
-            Modules Management
           </button>
         </li>
 

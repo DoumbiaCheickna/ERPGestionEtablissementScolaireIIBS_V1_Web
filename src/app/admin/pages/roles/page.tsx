@@ -263,7 +263,8 @@ export default function RolesPage() {
                                   padding: '8px 12px',
                                   borderRadius: '8px',
                                   fontSize: '12px',
-                                  fontWeight: '600'
+                                  fontWeight: '600',
+                                  color: 'black'
                                 }}
                               >
                                 #{role.id.toString().padStart(3, '0')}
