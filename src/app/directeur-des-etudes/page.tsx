@@ -7,6 +7,7 @@ import SecondaryMenu from "./components/SecondaryMenu";
 import HomeDashboard from "./components/HomeDashboard";
 import ProfessorsPage from "./components/ProfessorsPage";
 import FilieresPage from "./components/FilieresPage";
+import EtudiantsPage from "./components/EtudiantsPage"; 
 
 type MainItem =
   | "Accueil"
@@ -22,7 +23,7 @@ export default function DirecteurHomePage() {
 
   // src/app/directeur-des-etudes/page.tsx
 
-  const HIDE_SECONDARY: Exclude<MainItem, null>[] = ["Accueil", "Professeurs", "Filières"];
+  const HIDE_SECONDARY: Exclude<MainItem, null>[] = ["Accueil", "Professeurs", "Filières", "Etudiants"];
   const showSecondary = active !== null && !HIDE_SECONDARY.includes(active);
 
 
@@ -38,11 +39,12 @@ export default function DirecteurHomePage() {
             {active === "Accueil" && <HomeDashboard />}
             {active === "Professeurs" && <ProfessorsPage />}
             {active === "Filières" && <FilieresPage />}
-
+             {active === "Etudiants" && <EtudiantsPage />}
           {/* Placeholder pour les autres onglets */}            {active &&
             active !== "Accueil" &&
             active !== "Professeurs" &&
-            active !== "Filières" && (
+            active !== "Filières" && 
+            active !== "Etudiants" && (
               <div className="card shadow-sm">
                 <div className="card-body">
                   <h5 className="card-title mb-3">{active}</h5>

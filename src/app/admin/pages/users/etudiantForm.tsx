@@ -13,6 +13,7 @@ interface StudentFormProps {
   showSuccessToast: (msg: string) => void;
   showErrorToast: (msg: string) => void;
   fetchData: () => Promise<void>;
+  onCreated?: (id: string) => void;
 }
 
 export default function StudentForm({ 
@@ -22,7 +23,8 @@ export default function StudentForm({
   partenaires = [], 
   showSuccessToast, 
   showErrorToast, 
-  fetchData 
+  fetchData,
+  onCreated,
 }: StudentFormProps) {
 
   const [studentForm, setStudentForm] = useState({
@@ -109,48 +111,36 @@ export default function StudentForm({
     }
   };
 
+  // crée ou récupère une classe en renvoyant l'ID **Firestore** du doc
   const createOrGetClass = async (niveauId: string, filiereId: string) => {
     const selectedNiveau = niveaux.find(n => n.id === niveauId);
     const selectedFiliere = filieres.find(f => f.id === filiereId);
     if (!selectedNiveau || !selectedFiliere) throw new Error('Niveau ou filière non trouvé');
 
     const className = `${selectedNiveau.libelle} ${selectedFiliere.libelle}`;
-    const classesRef = collection(db, "classes");
+    const classesRef = collection(db, 'classes');
 
     const qy = query(
-      classesRef, 
-      where("niveau_id", "==", niveauId),
-      where("filiere_id", "==", filiereId)
+      classesRef,
+      where('niveau_id', '==', niveauId),
+      where('filiere_id', '==', filiereId)
     );
     const querySnapshot = await getDocs(qy);
 
     if (!querySnapshot.empty) {
-      const existingClass = querySnapshot.docs[0];
-      return {
-        id: existingClass.id,
-        libelle: existingClass.data().libelle,
-        niveau_id: existingClass.data().niveau_id,
-        filiere_id: existingClass.data().filiere_id
-      };
+      const existing = querySnapshot.docs[0];
+      const d = existing.data() as any;
+      return { id: existing.id, libelle: d.libelle, niveau_id: d.niveau_id, filiere_id: d.filiere_id };
     } else {
-      const classesSnapshot = await getDocs(classesRef);
-      const newId = classesSnapshot.size + 1;
-
-      await addDoc(classesRef, {
-        id: newId,
+      const docRef = await addDoc(classesRef, {
         libelle: className,
         niveau_id: niveauId,
         filiere_id: filiereId
       });
-
-      return {
-        id: newId.toString(),
-        libelle: className,
-        niveau_id: niveauId,
-        filiere_id: filiereId
-      };
+      return { id: docRef.id, libelle: className, niveau_id: niveauId, filiere_id: filiereId };
     }
   };
+
 
   const handleNiveauFiliereChange = async (niveauId: string, filiereId: string) => {
     if (niveauId && filiereId) {
@@ -158,23 +148,23 @@ export default function StudentForm({
       const selectedFiliere = filieres.find(f => f.id === filiereId);
       if (selectedNiveau && selectedFiliere) {
         const className = `${selectedNiveau.libelle} ${selectedFiliere.libelle}`;
-
-        const classesRef = collection(db, "classes");
+        const classesRef = collection(db, 'classes');
         const qy = query(
-          classesRef, 
-          where("niveau_id", "==", niveauId),
-          where("filiere_id", "==", filiereId)
+          classesRef,
+          where('niveau_id', '==', niveauId),
+          where('filiere_id', '==', filiereId)
         );
         const querySnapshot = await getDocs(qy);
 
         if (!querySnapshot.empty) {
-          const existingClass = querySnapshot.docs[0];
+          const existing = querySnapshot.docs[0];
+          const d = existing.data() as any;
           setStudentForm({
             ...studentForm,
             niveau_id: niveauId,
             filiere_id: filiereId,
-            classe_id: existingClass.data().id.toString(),
-            classe: existingClass.data().libelle
+            classe_id: existing.id,
+            classe: d.libelle
           });
         } else {
           setStudentForm({
@@ -187,51 +177,29 @@ export default function StudentForm({
         }
       }
     } else {
-      setStudentForm({
-        ...studentForm,
-        niveau_id: niveauId,
-        filiere_id: filiereId,
-        classe: ''
-      });
+      setStudentForm({ ...studentForm, niveau_id: niveauId, filiere_id: filiereId, classe: '' });
     }
   };
 
   const handleStudentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // validations de base
-      if (!studentForm.role_id) {
-        showErrorToast('Veuillez sélectionner un rôle');
-        return;
-      }
-      if (!studentForm.niveau_id || !studentForm.filiere_id) {
-        showErrorToast('Veuillez sélectionner un niveau et une filière');
-        return;
-      }
-      if (studentForm.boursier === 'oui' && !studentForm.bourse_fournisseur) {
-        showErrorToast('Veuillez sélectionner le fournisseur de bourse');
-        return;
-      }
+      if (!studentForm.role_id) return showErrorToast('Veuillez sélectionner un rôle');
+      if (!studentForm.niveau_id || !studentForm.filiere_id)
+        return showErrorToast('Veuillez sélectionner un niveau et une filière');
+      if (studentForm.boursier === 'oui' && !studentForm.bourse_fournisseur)
+        return showErrorToast('Veuillez sélectionner le fournisseur de bourse');
 
-      // rôle sélectionné
       const selectedRole = roles.find(r => r.id === studentForm.role_id);
-      if (!selectedRole) {
-        showErrorToast('Rôle sélectionné invalide');
-        return;
-      }
+      if (!selectedRole) return showErrorToast('Rôle sélectionné invalide');
 
-      // classe
       const classe = await createOrGetClass(studentForm.niveau_id, studentForm.filiere_id);
 
-      // fichiers
       const fileUrls = {
         copie_bac: studentForm.documents.copie_bac ? await uploadFile(studentForm.documents.copie_bac) : null,
         copie_cni: studentForm.documents.copie_cni ? await uploadFile(studentForm.documents.copie_cni) : null,
         releve_notes: studentForm.documents.releve_notes ? await uploadFile(studentForm.documents.releve_notes) : null
       };
-
-      const usersSnapshot = await getDocs(collection(db, "users"));
-      const newUserId = usersSnapshot.size + 1;
 
       const scholarshipData = {
         boursier: studentForm.boursier,
@@ -239,16 +207,21 @@ export default function StudentForm({
         bourse_valeur: studentForm.boursier === 'oui' ? studentForm.bourse_valeur : 0
       };
 
-      await addDoc(collection(db, "users"), {
+      // ➜ création de l'utilisateur et récupération de l'ID Firestore
+      const docRef = await addDoc(collection(db, 'users'), {
         ...studentForm,
         ...scholarshipData,
-        id: newUserId,
         role_id: studentForm.role_id,
-        role_libelle: selectedRole.libelle, // ✅ utile pour la redirection au login
+        role_libelle: selectedRole.libelle,
         classe_id: classe.id,
         classe: classe.libelle,
         documents: fileUrls
       });
+
+      // ➜ notifier le parent pour qu'il crée l'inscription et ferme le modal
+      if (onCreated) {
+        await onCreated(docRef.id);
+      }
 
       showSuccessToast('Étudiant ajouté avec succès!');
 
@@ -294,8 +267,8 @@ export default function StudentForm({
 
       await fetchData();
     } catch (error) {
-      console.error('Erreur lors de l\'ajout de l\'étudiant:', error);
-      showErrorToast('Erreur lors de l\'ajout de l\'étudiant');
+      console.error("Erreur lors de l'ajout de l'étudiant:", error);
+      showErrorToast("Erreur lors de l'ajout de l'étudiant");
     }
   };
 
