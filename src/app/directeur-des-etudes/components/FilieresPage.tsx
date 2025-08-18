@@ -552,9 +552,7 @@ function ClasseDetail({
 
           {tab === "matieres" && <MatieresSection classe={classe} ok={ok} ko={ko} />}
           {tab === "edt" && (
-            <div className="text-muted">
-              (À brancher) Ici, l’**emploi du temps** de la classe.
-            </div>
+            <EDTSection filiere={filiere} classe={classe} ok={ok} ko={ko} />
           )}
           {tab === "bulletin" && (
             <div className="text-muted">
@@ -936,5 +934,734 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
         </>
       )}
     </>
+  );
+}
+
+/* ======================= EMPLOI DU TEMPS (avec Voir/Modifier) ======================= */
+type TSemestre = "S1" | "S2" | "S3" | "S4" | "S5" | "S6";
+
+type TEDTSlot = {
+  day: number; // 1=Lundi ... 6=Samedi
+  matiere_id: string;
+  matiere_libelle: string;
+  start: string; // "08:00"
+  end: string;   // "10:30"
+  salle: string;
+  enseignant: string;
+};
+type TEDT = {
+  id: string;
+  class_id: string;
+  class_libelle: string;
+  annee: string;     // "2024-2025"
+  semestre: TSemestre;
+  slots: TEDTSlot[];
+  created_at: number;
+  title?: string;
+};
+
+function EDTSection({
+  filiere,
+  classe,
+  ok,
+  ko,
+}: {
+  filiere: TFiliere;
+  classe: TClasse;
+  ok: (m: string) => void;
+  ko: (m: string) => void;
+}) {
+  const ECOLE = "Institut Informatique Business School";
+
+  // filtres haut
+  const [selectedSem, setSelectedSem] = React.useState<TSemestre>("S1");
+  
+
+  // data
+  const [matieres, setMatieres] = React.useState<TMatiere[]>([]);
+  const [edts, setEdts] = React.useState<TEDT[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  // création
+  const [showCreate, setShowCreate] = React.useState(false);
+  const [createSem, setCreateSem] = React.useState<TSemestre>("S1");
+  const [draftSlots, setDraftSlots] = React.useState<Record<number, TEDTSlot[]>>({
+    1: [], 2: [], 3: [], 4: [], 5: [], 6: [],
+  });
+  type AnneeScolaire = "2024-2025" | "2025-2026";
+const ANNEES: AnneeScolaire[] = ["2024-2025", "2025-2026"];
+
+  const [selectedYear, setSelectedYear] = React.useState<AnneeScolaire>("2024-2025");
+  const [createYear, setCreateYear] = React.useState<AnneeScolaire>("2024-2025");
+
+
+  // prévisualisation / édition d’un EDT existant
+  const [preview, setPreview] = React.useState<{
+    open: boolean;
+    edt: TEDT | null;
+    edit: boolean;
+    // brouillon d’édition (par jour), séparé du brouillon de création
+    draft: Record<number, TEDTSlot[]>;
+  }>({ open: false, edt: null, edit: false, draft: {1:[],2:[],3:[],4:[],5:[],6:[]} });
+
+  // Accordéon React pour la modale Voir/Modifier
+  const [openDaysPreview, setOpenDaysPreview] = React.useState<number[]>([]);
+  const toggleDayPreview = (day: number) =>
+    setOpenDaysPreview(prev => prev.includes(day) ? prev.filter(d=>d!==day) : [...prev, day]);
+
+  // Chargement
+  React.useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        // matières
+        const snapM = await getDocs(query(collection(db, "matieres"), where("class_id", "==", classe.id)));
+        const listM: TMatiere[] = [];
+        snapM.forEach(d => {
+          const v = d.data() as any;
+          listM.push({ id: d.id, class_id: v.class_id, libelle: v.libelle, ue_id: v.ue_id ?? null });
+        });
+        listM.sort((a,b)=>a.libelle.localeCompare(b.libelle));
+        setMatieres(listM);
+
+        // edts
+        const snapE = await getDocs(query(collection(db, "edts"), where("class_id","==",classe.id)));
+        const listE: TEDT[] = [];
+        snapE.forEach(d => {
+          const v = d.data() as any;
+          listE.push({
+            id: d.id,
+            class_id: v.class_id,
+            class_libelle: v.class_libelle,
+            annee: v.annee,
+            semestre: v.semestre,
+            slots: (v.slots ?? []) as TEDTSlot[],
+            created_at: v.created_at ?? Date.now(),
+            title: v.title ?? undefined,
+          });
+        });
+        listE.sort((a,b)=> (b.created_at ?? 0) - (a.created_at ?? 0));
+        setEdts(listE);
+      } catch (e) {
+        console.error(e);
+        ko("Erreur de chargement des emplois du temps.");
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classe.id]);
+
+  const filtered = React.useMemo(() => {
+    return edts.filter(e => e.semestre === selectedSem && e.annee === selectedYear);
+  }, [edts, selectedSem, selectedYear]);
+
+  /* ======== Création EDT ======== */
+  const addDraftSlot = (day: number) => {
+    setDraftSlots(prev => ({
+      ...prev,
+      [day]: [...prev[day], emptySlot(day)]
+    }));
+  };
+  const removeDraftSlot = (day: number, idx: number) => {
+    setDraftSlots(prev => {
+      const cp = {...prev};
+      cp[day] = cp[day].filter((_,i)=>i!==idx);
+      return cp;
+    });
+  };
+  const updateDraftSlot = (day: number, idx: number, patch: Partial<TEDTSlot>) => {
+    setDraftSlots(prev => {
+      const cp = {...prev};
+      cp[day] = cp[day].map((s,i)=> i===idx ? {...s, ...patch} : s);
+      return cp;
+    });
+  };
+  const saveEDT = async () => {
+    const allSlots = Object.values(draftSlots).flat();
+    for (const s of allSlots) {
+      if (!s.matiere_id) return ko("Sélectionnez une matière pour chaque ligne.");
+      if (!isValidRange(s.start, s.end)) return ko("Vérifiez les horaires (début < fin).");
+      s.matiere_libelle = matieres.find(m => m.id === s.matiere_id)?.libelle ?? "";
+    }
+    try {
+      await addDoc(collection(db, "edts"), {
+        class_id: classe.id,
+        class_libelle: classe.libelle,
+        annee: createYear,
+        semestre: createSem,
+        slots: allSlots,
+        created_at: Date.now(),
+        title: `EDT ${classe.libelle} - ${createSem} ${createYear}`,
+      });
+      ok("Emploi du temps créé.");
+      setShowCreate(false);
+      setDraftSlots({1:[],2:[],3:[],4:[],5:[],6:[]});
+      // refresh
+      const snapE = await getDocs(query(collection(db, "edts"), where("class_id","==",classe.id)));
+      const listE: TEDT[] = [];
+      snapE.forEach(d => {
+        const v = d.data() as any;
+        listE.push({
+          id: d.id, class_id: v.class_id, class_libelle: v.class_libelle,
+          annee: v.annee, semestre: v.semestre, slots: (v.slots ?? []) as TEDTSlot[],
+          created_at: v.created_at ?? Date.now(), title: v.title ?? undefined
+        });
+      });
+      listE.sort((a,b)=> (b.created_at ?? 0) - (a.created_at ?? 0));
+      setEdts(listE);
+      setSelectedSem(createSem);
+      setSelectedYear(createYear);
+    } catch (e) {
+      console.error(e);
+      ko("Impossible d’enregistrer l’EDT.");
+    }
+  };
+
+  /* ======== Prévisualiser / Modifier un EDT existant ======== */
+  const openPreview = (edt: TEDT) => {
+    setOpenDaysPreview([1,2,3,4,5,6]); // ouvrir tout par défaut (facilement modifiable)
+    setPreview({
+      open: true,
+      edt,
+      edit: false,
+      draft: slotsToDraft(edt.slots),
+    });
+  };
+
+  const closePreview = () => {
+    setPreview({ open:false, edt:null, edit:false, draft:{1:[],2:[],3:[],4:[],5:[],6:[]} });
+  };
+
+  const toggleEdit = () => {
+    setPreview(p => ({ ...p, edit: !p.edit }));
+  };
+
+  // édition dans la modale
+  const addPreviewSlot = (day: number) => {
+    setPreview(p => ({ ...p, draft: { ...p.draft, [day]: [...p.draft[day], emptySlot(day)] }}));
+  };
+  const removePreviewSlot = (day: number, idx: number) => {
+    setPreview(p => {
+      const cp = {...p.draft};
+      cp[day] = cp[day].filter((_,i)=>i!==idx);
+      return { ...p, draft: cp };
+    });
+  };
+  const updatePreviewSlot = (day: number, idx: number, patch: Partial<TEDTSlot>) => {
+    setPreview(p => {
+      const cp = {...p.draft};
+      cp[day] = cp[day].map((s,i)=> i===idx ? {...s, ...patch} : s);
+      return { ...p, draft: cp };
+    });
+  };
+
+  const savePreviewChanges = async () => {
+    if (!preview.edt) return;
+    const all = Object.values(preview.draft).flat();
+    for (const s of all) {
+      if (!s.matiere_id) return ko("Sélectionnez une matière pour chaque ligne.");
+      if (!isValidRange(s.start, s.end)) return ko("Vérifiez les horaires (début < fin).");
+      s.matiere_libelle = matieres.find(m => m.id === s.matiere_id)?.libelle ?? "";
+    }
+    try {
+      await updateDoc(doc(db, "edts", preview.edt.id), { slots: all });
+      ok("Emploi du temps mis à jour.");
+      // mets à jour l’array edts local
+      setEdts(old => old.map(e => e.id === preview.edt!.id ? { ...e, slots: all } : e));
+      setPreview(p => ({ ...p, edit:false }));
+    } catch (e) {
+      console.error(e);
+      ko("Mise à jour impossible.");
+    }
+  };
+
+  const days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+
+  const openPDF = (edt: TEDT) => {
+    const w = window.open("", "_blank", "width=900,height=700");
+    if (!w) return;
+    const html = renderEDTHtml(ECOLE, filiere.libelle, classe.libelle, edt);
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    setTimeout(()=> w.print(), 250);
+  };
+
+  return (
+    <div className="d-flex flex-column gap-3">
+      {/* EN-TÊTE */}
+      <div className="d-flex flex-wrap justify-content-between align-items-end gap-2">
+        <div>
+          <h5 className="mb-1">{ECOLE}</h5>
+          <div className="text-muted">
+            Filière : <strong>{filiere.libelle}</strong> — Classe : <strong>{classe.libelle}</strong>
+          </div>
+        </div>
+
+        <div className="d-flex flex-wrap align-items-end gap-2">
+          <div>
+            <label className="form-label mb-1">Classe</label>
+            <input className="form-control" value={classe.libelle} disabled />
+          </div>
+          <div>
+            <label className="form-label mb-1">Semestre</label>
+            <select className="form-select" value={selectedSem} onChange={(e)=>setSelectedSem(e.target.value as TSemestre)}>
+              {["S1","S2","S3","S4","S5","S6"].map(s=> <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="form-label mb-1">Année scolaire</label>
+            <select
+              className="form-select"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value as AnneeScolaire)}
+            >
+              {ANNEES.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+
+          <button className="btn btn-primary ms-2" onClick={()=> setShowCreate(true)}>
+            <i className="bi bi-calendar-plus me-2" />
+            Créer un emploi du temps
+          </button>
+        </div>
+      </div>
+
+      {/* LISTE COMPACTE */}
+      <div className="card border-0">
+        <div className="card-body">
+          <h6 className="mb-3">Emplois du temps ({selectedSem} — {selectedYear})</h6>
+
+          {loading ? (
+            <div className="text-center py-4"><div className="spinner-border" /></div>
+          ) : filtered.length === 0 ? (
+            <div className="text-muted">Aucun emploi du temps pour ces critères.</div>
+          ) : (
+            <div className="row g-3">
+              {filtered.map(edt => (
+                <div className="col-md-4" key={edt.id}>
+                  <div className="card h-100 shadow-sm">
+                    <div className="card-body d-flex flex-column">
+                      <h6 className="mb-1">{edt.title ?? `EDT ${classe.libelle}`}</h6>
+                      <small className="text-muted">{classe.libelle} • {edt.semestre} • {edt.annee}</small>
+                      <div className="mt-auto d-flex gap-2 pt-2">
+                        <button className="btn btn-outline-secondary btn-sm" onClick={()=> openPreview(edt)}>
+                          Voir
+                        </button>
+                        <button className="btn btn-outline-primary btn-sm" onClick={()=> openPDF(edt)}>
+                          Télécharger PDF
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* MODAL CREATION EDT */}
+      {showCreate && (
+        <>
+          <div className="modal fade show" style={{ display: "block" }}>
+            <div className="modal-dialog modal-xl modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Créer un emploi du temps</h5>
+                  <button className="btn-close" onClick={()=> setShowCreate(false)} />
+                </div>
+
+                <div className="modal-body">
+                  <div className="row g-3 mb-3">
+                    <div className="col-md-4">
+                      <label className="form-label">Classe</label>
+                      <input className="form-control" value={classe.libelle} disabled />
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label">Semestre</label>
+                      <select className="form-select" value={createSem} onChange={(e)=> setCreateSem(e.target.value as TSemestre)}>
+                        {["S1","S2","S3","S4","S5","S6"].map(s=> <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-md-3">
+                      <label className="form-label">Année scolaire</label>
+                      <select
+                        className="form-select"
+                        value={createYear}
+                        onChange={(e) => setCreateYear(e.target.value as AnneeScolaire)}
+                      >
+                        {ANNEES.map(a => <option key={a} value={a}>{a}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Jours → créneaux (création) */}
+                  {renderDayEditors({
+                    mode: "create",
+                    draft: draftSlots,
+                    matieres,
+                    addSlot: addDraftSlot,
+                    removeSlot: removeDraftSlot,
+                    updateSlot: updateDraftSlot,
+                  })}
+                </div>
+
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={()=> setShowCreate(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={saveEDT}>Enregistrer</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={()=> setShowCreate(false)} />
+        </>
+      )}
+
+      {/* MODAL VOIR / MODIFIER */}
+      {preview.open && preview.edt && (
+        <>
+          <div className="modal fade show" style={{ display: "block" }}>
+            <div className="modal-dialog modal-xl modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <div>
+                    <h5 className="modal-title">{preview.edt.title ?? "Emploi du temps"}</h5>
+                    <small className="text-muted">{preview.edt.semestre} • {preview.edt.annee}</small>
+                  </div>
+                  <div className="d-flex gap-2">
+                    {!preview.edit ? (
+                      <button className="btn btn-outline-primary" onClick={toggleEdit}>
+                        Modifier
+                      </button>
+                    ) : (
+                      <>
+                        <button className="btn btn-outline-secondary" onClick={toggleEdit}>Annuler modifs</button>
+                        <button className="btn btn-primary" onClick={savePreviewChanges}>Enregistrer</button>
+                      </>
+                    )}
+                    <button className="btn-close" onClick={closePreview} />
+                  </div>
+                </div>
+
+                <div className="modal-body">
+                  {/* Entête établissement */}
+                  <div className="d-flex justify-content-between align-items-end mb-3">
+                    <div>
+                      <strong>{ECOLE}</strong>
+                      <div className="text-muted">
+                        Filière : <strong>{filiere.libelle}</strong> — Classe : <strong>{classe.libelle}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Affichage par jour */}
+                  {preview.edit ? (
+                    // Mode édition : mêmes éditeurs que la création, mais basés sur preview.draft
+                    renderDayEditors({
+                      mode: "edit",
+                      draft: preview.draft,
+                      matieres,
+                      addSlot: addPreviewSlot,
+                      removeSlot: removePreviewSlot,
+                      updateSlot: updatePreviewSlot,
+                      openDays: openDaysPreview,
+                      onToggleDay: toggleDayPreview,
+                    })
+                  ) : (
+                    // Mode lecture seule : tableau par jour
+                    renderDayReadonly(preview.edt.slots)
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={closePreview} />
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ======== Helpers locaux au composant ======== */
+function emptySlot(day: number): TEDTSlot {
+  return {
+    day,
+    matiere_id: "",
+    matiere_libelle: "",
+    start: "08:00",
+    end: "10:00",
+    salle: "",
+    enseignant: "",
+  };
+}
+function renderEDTHtml(
+  ecole: string,
+  filiereLib: string,
+  classeLib: string,
+  edt: { semestre: string; annee: string; slots: TEDTSlot[] }
+): string {
+  const days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+  const grouped: Record<number, TEDTSlot[]> = {1:[],2:[],3:[],4:[],5:[],6:[]};
+  (edt.slots ?? []).forEach(s => grouped[s.day].push(s));
+  Object.values(grouped).forEach(list => list.sort((a,b)=> toMinutes(a.start)-toMinutes(b.start)));
+
+  const rowsPerDay = (d: number) =>
+    grouped[d].length === 0
+      ? `<tr><td colspan="4" style="color:#666">—</td></tr>`
+      : grouped[d].map(s => `
+          <tr>
+            <td>${formatFR(s.start)} — ${formatFR(s.end)}</td>
+            <td>${s.matiere_libelle}</td>
+            <td>${s.salle || "—"}</td>
+            <td>${s.enseignant || "—"}</td>
+          </tr>
+        `).join("");
+
+  const tables = days.map((label, i) => `
+    <h3 style="margin:12px 0">${label}</h3>
+    <table style="width:100%; border-collapse:collapse" border="1" cellpadding="6">
+      <thead>
+        <tr><th>Heure</th><th>Matière</th><th>Salle</th><th>Enseignant</th></tr>
+      </thead>
+      <tbody>${rowsPerDay(i+1)}</tbody>
+    </table>
+  `).join("");
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>EDT ${classeLib} ${edt.semestre} ${edt.annee}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px; }
+    h1 { margin: 0 0 6px 0; font-size: 20px; }
+    h2 { margin: 0 0 18px 0; font-size: 16px; color:#444; }
+    h3 { font-size: 15px; }
+    th { background:#f5f5f5; }
+  </style>
+</head>
+<body>
+  <h1>${ecole}</h1>
+  <h2>Filière : <b>${filiereLib}</b> — Classe : <b>${classeLib}</b> — ${edt.semestre} • ${edt.annee}</h2>
+  ${tables}
+</body>
+</html>`;
+}
+
+function slotsToDraft(slots: TEDTSlot[]): Record<number, TEDTSlot[]> {
+  const draft: Record<number, TEDTSlot[]> = {1:[],2:[],3:[],4:[],5:[],6:[]};
+  for (const s of (slots ?? [])) {
+    draft[s.day] = [...draft[s.day], { ...s }];
+  }
+  // tri par heure
+  Object.values(draft).forEach(list => list.sort((a,b)=> toMinutes(a.start) - toMinutes(b.start)));
+  return draft;
+}
+
+function renderDayReadonly(slots: TEDTSlot[]) {
+  const days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+  const grouped: Record<number, TEDTSlot[]> = {1:[],2:[],3:[],4:[],5:[],6:[]};
+  (slots ?? []).forEach(s => grouped[s.day].push(s));
+  Object.values(grouped).forEach(list => list.sort((a,b)=> toMinutes(a.start)-toMinutes(b.start)));
+
+  return (
+    <div className="d-flex flex-column gap-3">
+      {Object.entries(grouped).map(([d, list]) => (
+        <div className="card" key={d}>
+          <div className="card-header fw-semibold">{days[Number(d)-1]}</div>
+          <div className="card-body p-0">
+            {list.length === 0 ? (
+              <div className="text-muted p-3">—</div>
+            ) : (
+              <div className="table-responsive">
+                <table className="table mb-0 align-middle">
+                  <thead className="table-light">
+                    <tr>
+                      <th>Heure</th>
+                      <th>Matière</th>
+                      <th>Salle</th>
+                      <th>Enseignant</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {list.map((s, i) => (
+                      <tr key={i}>
+                        <td>{formatFR(s.start)} — {formatFR(s.end)}</td>
+                        <td>{s.matiere_libelle}</td>
+                        <td>{s.salle || "—"}</td>
+                        <td>{s.enseignant || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+function formatFR(hhmm: string) {
+  const [hh, mm] = hhmm.split(":");
+  return `${hh}h${mm === "00" ? "" : mm}`;
+}
+
+/** Génère les heures toutes les 30 min entre 08:00 et 22:00 */
+function halfHours(start = "08:00", end = "22:00"): string[] {
+  const res: string[] = [];
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  let total = sh * 60 + sm;
+  const limit = eh * 60 + em;
+  while (total <= limit) {
+    const h = Math.floor(total / 60).toString().padStart(2, "0");
+    const m = (total % 60).toString().padStart(2, "0");
+    res.push(`${h}:${m}`);
+    total += 30; // pas de 30 minutes
+  }
+  return res;
+}
+
+/** Convertit "HH:MM" -> minutes */
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** Vérifie que l'intervalle est valide (début < fin) */
+function isValidRange(start: string, end: string): boolean {
+  return toMinutes(start) < toMinutes(end);
+}
+
+
+/**
+ * Editeurs par jour (utilisé en création et en édition dans la modale)
+ * - mode "create" : pas d’accordéon, tout est ouvert
+ * - mode "edit"   : accordéon controlé par openDays / onToggleDay
+ */
+function renderDayEditors(args: {
+  mode: "create" | "edit";
+  draft: Record<number, TEDTSlot[]>;
+  matieres: TMatiere[];
+  addSlot: (day: number) => void;
+  removeSlot: (day: number, idx: number) => void;
+  updateSlot: (day: number, idx: number, patch: Partial<TEDTSlot>) => void;
+  openDays?: number[];
+  onToggleDay?: (day: number) => void;
+}) {
+  const { mode, draft, matieres, addSlot, removeSlot, updateSlot, openDays = [1,2,3,4,5,6], onToggleDay } = args;
+  const days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+  return (
+    <div>
+      {days.map((label, i) => {
+        const day = (i+1) as 1|2|3|4|5|6;
+        const slots = draft[day] ?? [];
+        const isOpen = openDays.includes(day);
+        return (
+          <div className="border rounded mb-2" key={day}>
+            <button
+              type="button"
+              className="w-100 text-start btn btn-light d-flex justify-content-between align-items-center"
+              onClick={() => (mode === "edit" && onToggleDay) ? onToggleDay(day) : undefined}
+              style={{ padding: "10px 14px", cursor: mode==="edit" ? "pointer" : "default" }}
+            >
+              <span>
+                {label} {slots.length ? <span className="text-muted">({slots.length} créneau(x))</span> : null}
+              </span>
+              {mode === "edit" ? <i className={`bi ${isOpen ? "bi-chevron-up" : "bi-chevron-down"}`} /> : null}
+            </button>
+
+            {(mode === "create" || isOpen) && (
+              <div className="p-3">
+                <div className="d-flex justify-content-end mb-2">
+                  <button className="btn btn-outline-primary btn-sm" onClick={()=> addSlot(day)}>
+                    <i className="bi bi-plus-lg me-1" /> Ajouter un créneau
+                  </button>
+                </div>
+
+                {slots.length === 0 ? (
+                  <div className="text-muted">Aucun créneau pour ce jour.</div>
+                ) : (
+                  <div className="table-responsive">
+                    <table className="table align-middle">
+                      <thead className="table-light">
+                        <tr>
+                          <th style={{minWidth: 220}}>Matière</th>
+                          <th>Début</th>
+                          <th>Fin</th>
+                          <th>Salle</th>
+                          <th>Enseignant</th>
+                          <th style={{width: 80}}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {slots.map((s, idx) => (
+                          <tr key={idx}>
+                            <td>
+                              <select
+                                className="form-select"
+                                value={s.matiere_id}
+                                onChange={(e)=> updateSlot(day, idx, { matiere_id: e.target.value })}
+                              >
+                                <option value="">— Choisir —</option>
+                                {matieres.map(m => <option key={m.id} value={m.id}>{m.libelle}</option>)}
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                className="form-select"
+                                value={s.start}
+                                onChange={(e)=> updateSlot(day, idx, { start: e.target.value })}
+                              >
+                                {halfHours().map(h => <option key={h} value={h}>{formatFR(h)}</option>)}
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                className="form-select"
+                                value={s.end}
+                                onChange={(e)=> updateSlot(day, idx, { end: e.target.value })}
+                              >
+                                {halfHours().map(h => <option key={h} value={h}>{formatFR(h)}</option>)}
+                              </select>
+                            </td>
+                            <td>
+                              <input
+                                className="form-control"
+                                value={s.salle}
+                                onChange={(e)=> updateSlot(day, idx, { salle: e.target.value })}
+                                placeholder="Ex: A102"
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="form-control"
+                                value={s.enseignant}
+                                onChange={(e)=> updateSlot(day, idx, { enseignant: e.target.value })}
+                                placeholder="Nom enseignant"
+                              />
+                            </td>
+                            <td>
+                              <button className="btn btn-outline-danger btn-sm" onClick={()=> removeSlot(day, idx)}>
+                                Suppr.
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
