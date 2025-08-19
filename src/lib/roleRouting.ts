@@ -18,6 +18,5 @@ export function routeForRole(roleLabel: string): string {
   if (isDirector) return "/directeur-des-etudes";
   if (n === "admin" || n.includes("administrateur")) return "/admin/home";
 
-  // ✅ plus de /notReady — on renvoie par défaut sur /admin/home
   return "/admin/home";
 }

@@ -1,7 +1,7 @@
 // src/app/directeur-des-etudes/components/ProfessorsPage.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   collection,
   addDoc,
@@ -13,9 +13,19 @@ import {
   getDoc,
   updateDoc,
   deleteDoc,
+  orderBy,
+  limit,
+  startAfter,
+  QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
 import Toast from "../../admin/components/ui/Toast";
+
+/* ------------------------------------------------------------------ */
+/* Constantes                                                         */
+/* ------------------------------------------------------------------ */
+const ROLE_PROF_KEY = "prof";
+const PAGE_SIZE = 20;
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -24,17 +34,39 @@ type TRole = { id: string | number; libelle: string };
 type TMatiere = { id: string; libelle: string };
 type TClasse = { id: string; libelle: string };
 
+/** Professeur (type canonique côté app) */
+type TProfessor = {
+  docId: string;
+  id?: number;
+  nom: string;
+  prenom: string;
+  email?: string;
+  login?: string;
+  /** Champ canonique: spécialité */
+  specialite?: string;
+  /** Rôle normalisé en string côté app */
+  role_id?: string;
+  role_libelle?: string;
+  role_key?: string;
+  telephone?: string;
+  adresse?: string;
+  classe_id?: string | null;
+  classe_libelle?: string | null;
+  /** Optionnel: description détaillée si tu la conserves */
+  specialite_detaillee?: string;
+};
+
 type TUserRow = {
   id?: number;
   docId: string;
   nom: string;
   prenom: string;
   specialite?: string;
-  specialty?: string;
-  role_id?: string | number;
+  role_id?: string; // normalisé en string
   role_libelle?: string;
-  classe_id?: string;
-  classe_libelle?: string;
+  role_key?: string;
+  classe_id?: string | null;
+  classe_libelle?: string | null;
 };
 
 /* ------------------------------------------------------------------ */
@@ -46,6 +78,10 @@ export default function ProfessorsPage() {
   const [classes, setClasses] = useState<TClasse[]>([]);
   const [list, setList] = useState<TUserRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastDoc, setLastDoc] =
+    useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMore, setHasMore] = useState(false);
 
   // UI: toasts
   const [showSuccess, setShowSuccess] = useState(false);
@@ -59,7 +95,7 @@ export default function ProfessorsPage() {
   const [showDetails, setShowDetails] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
-  const [details, setDetails] = useState<any>(null);
+  const [details, setDetails] = useState<TProfessor | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -111,55 +147,43 @@ export default function ProfessorsPage() {
     }
   };
 
-  const fetchProfessors = async () => {
+  /* ---------------------- Liste: chargement paginé ------------------ */
+  const loadFirstPage = async () => {
     setLoading(true);
     try {
-      // 1) via role_libelle
-      let snap = await getDocs(
-        query(collection(db, "users"), where("role_libelle", "==", "Professeur"))
+      // NOTE: Requêtes Firestore indexées:
+      // where("role_key", "==", "prof").orderBy("nom").limit(PAGE_SIZE)
+      // Si Firestore demande un index composite, crée-le via le lien d’erreur.
+      const qy = query(
+        collection(db, "users"),
+        where("role_key", "==", ROLE_PROF_KEY),
+        orderBy("nom"),
+        limit(PAGE_SIZE)
       );
+      const snap = await getDocs(qy);
 
-      // 2) sinon via role_id
-      if (snap.empty) {
-        const profRole = roles.find((r) => r.libelle === "Professeur");
-        if (profRole) {
-          snap = await getDocs(
-            query(
-              collection(db, "users"),
-              where("role_id", "==", (profRole.id as any) ?? "")
-            )
-          );
-        } else {
-          // 3) sinon tout
-          snap = await getDocs(collection(db, "users"));
-        }
-      }
-
-      const rows: TUserRow[] = [];
-      snap.forEach((d) => {
+      const rows: TUserRow[] = snap.docs.map((d) => {
         const data = d.data() as DocumentData;
-        rows.push({
+        return {
           docId: d.id,
           id: data.id,
           nom: data.nom || "",
           prenom: data.prenom || "",
           specialite: data.specialite || data.specialty || "",
-          role_id: data.role_id,
+          role_id:
+            data.role_id !== undefined && data.role_id !== null
+              ? String(data.role_id)
+              : undefined,
           role_libelle: data.role_libelle,
-          classe_id: data.classe_id,
-          classe_libelle: data.classe_libelle,
-        });
+          role_key: data.role_key,
+          classe_id: data.classe_id ?? null,
+          classe_libelle: data.classe_libelle ?? null,
+        };
       });
 
-      // Filtre final si nécessaire
-      const final = rows.filter((r) => {
-        if (r.role_libelle) return r.role_libelle === "Professeur";
-        const pr = roles.find((x) => x.libelle === "Professeur");
-        if (!pr) return true;
-        return String(r.role_id ?? "") === String(pr.id ?? "");
-      });
-
-      setList(final);
+      setList(rows);
+      setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+      setHasMore(snap.size === PAGE_SIZE);
     } catch (e) {
       console.error(e);
       showErrorToast("Erreur lors du chargement des professeurs.");
@@ -168,21 +192,58 @@ export default function ProfessorsPage() {
     }
   };
 
+  const loadMore = async () => {
+    if (!lastDoc || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const qy = query(
+        collection(db, "users"),
+        where("role_key", "==", ROLE_PROF_KEY),
+        orderBy("nom"),
+        startAfter(lastDoc),
+        limit(PAGE_SIZE)
+      );
+      const snap = await getDocs(qy);
+
+      const rows: TUserRow[] = snap.docs.map((d) => {
+        const data = d.data() as DocumentData;
+        return {
+          docId: d.id,
+          id: data.id,
+          nom: data.nom || "",
+          prenom: data.prenom || "",
+          specialite: data.specialite || data.specialty || "",
+          role_id:
+            data.role_id !== undefined && data.role_id !== null
+              ? String(data.role_id)
+              : undefined,
+          role_libelle: data.role_libelle,
+          role_key: data.role_key,
+          classe_id: data.classe_id ?? null,
+          classe_libelle: data.classe_libelle ?? null,
+        };
+      });
+
+      setList((prev) => [...prev, ...rows]);
+      setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+      setHasMore(snap.size === PAGE_SIZE);
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Impossible de charger plus de professeurs.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   const fetchAll = async () => {
     await Promise.all([fetchRoles(), fetchMatieres(), fetchClasses()]);
-    await fetchProfessors();
+    await loadFirstPage();
   };
 
   useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Quand les rôles arrivent après coup, on relance la liste pr un tri correct
-  useEffect(() => {
-    if (roles.length) fetchProfessors();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roles.length]);
 
   /* ---------------------- Détails: open / load ---------------------- */
   const openDetails = async (docId: string) => {
@@ -200,7 +261,29 @@ export default function ProfessorsPage() {
         setShowDetails(false);
         return;
       }
-      setDetails({ docId, ...d.data() });
+      const data = d.data() as DocumentData;
+      const prof: TProfessor = {
+        docId,
+        id: data.id,
+        nom: data.nom ?? "",
+        prenom: data.prenom ?? "",
+        email: data.email ?? "",
+        login: data.login ?? "",
+        // lecture rétrocompatible
+        specialite: data.specialite ?? data.specialty ?? "",
+        role_id:
+          data.role_id !== undefined && data.role_id !== null
+            ? String(data.role_id)
+            : undefined,
+        role_libelle: data.role_libelle,
+        role_key: data.role_key,
+        telephone: data.telephone ?? "",
+        adresse: data.adresse ?? "",
+        classe_id: data.classe_id ?? null,
+        classe_libelle: data.classe_libelle ?? null,
+        specialite_detaillee: data.specialite_detaillee ?? "",
+      };
+      setDetails(prof);
     } catch (e) {
       console.error(e);
       showErrorToast("Erreur lors du chargement des détails.");
@@ -216,21 +299,24 @@ export default function ProfessorsPage() {
     setSavingEdit(true);
     try {
       const ref = doc(db, "users", detailsDocId);
-      // On persiste quelques champs clés (tu pourras étendre si besoin)
-      const payload: any = {
+      // On persiste les champs clés (champ canonique: specialite)
+      const payload: Partial<TProfessor> & { specialty?: string } = {
         nom: details.nom || "",
         prenom: details.prenom || "",
         email: details.email || "",
         login: details.login || "",
-        specialty: details.specialty || details.specialite || "",
-        specialite: details.specialite || details.specialty || "",
+        specialite: details.specialite || "",
         telephone: details.telephone || "",
         adresse: details.adresse || "",
+        specialite_detaillee: details.specialite_detaillee || "",
       };
-      await updateDoc(ref, payload);
+      // Compat descendante: dupliquer sur 'specialty' (à retirer quand migration OK)
+      payload.specialty = payload.specialite ?? "";
+
+      await updateDoc(ref, payload as any);
       showSuccessToast("Modifications enregistrées.");
       setEditMode(false);
-      await fetchProfessors();
+      await loadFirstPage(); // rafraîchit la liste paginée
     } catch (e) {
       console.error(e);
       showErrorToast("Impossible d’enregistrer les modifications.");
@@ -247,7 +333,7 @@ export default function ProfessorsPage() {
       await deleteDoc(doc(db, "users", detailsDocId));
       showSuccessToast("Professeur supprimé.");
       setShowDetails(false);
-      await fetchProfessors();
+      await loadFirstPage();
     } catch (e) {
       console.error(e);
       showErrorToast("Suppression impossible.");
@@ -274,8 +360,29 @@ export default function ProfessorsPage() {
       showSuccessToast("Affectation enregistrée.");
       // refresh details
       const d = await getDoc(doc(db, "users", detailsDocId));
-      setDetails({ docId: detailsDocId, ...d.data() });
-      await fetchProfessors();
+      const data = d.data() as DocumentData;
+      const prof: TProfessor = {
+        docId: detailsDocId,
+        id: data.id,
+        nom: data.nom ?? "",
+        prenom: data.prenom ?? "",
+        email: data.email ?? "",
+        login: data.login ?? "",
+        specialite: data.specialite ?? data.specialty ?? "",
+        role_id:
+          data.role_id !== undefined && data.role_id !== null
+            ? String(data.role_id)
+            : undefined,
+        role_libelle: data.role_libelle,
+        role_key: data.role_key,
+        telephone: data.telephone ?? "",
+        adresse: data.adresse ?? "",
+        classe_id: data.classe_id ?? null,
+        classe_libelle: data.classe_libelle ?? null,
+        specialite_detaillee: data.specialite_detaillee ?? "",
+      };
+      setDetails(prof);
+      await loadFirstPage();
     } catch (e) {
       console.error(e);
       showErrorToast("Affectation impossible.");
@@ -315,7 +422,7 @@ export default function ProfessorsPage() {
               showSuccessToast={showSuccessToast}
               showErrorToast={showErrorToast}
               fetchData={async () => {
-                await fetchProfessors();
+                await loadFirstPage();
               }}
             />
           </div>
@@ -331,12 +438,14 @@ export default function ProfessorsPage() {
               Liste des professeurs
             </h5>
             <span className="badge bg-light text-dark">
-              {loading ? "Chargement…" : `${list.length} résultat(s)`}
+              {loading && list.length === 0
+                ? "Chargement…"
+                : `${list.length} résultat(s)`}
             </span>
           </div>
         </div>
         <div className="card-body p-0">
-          {loading ? (
+          {loading && list.length === 0 ? (
             <div className="text-center py-5">
               <div className="spinner-border" role="status" />
               <div className="text-muted mt-2">Chargement…</div>
@@ -346,38 +455,64 @@ export default function ProfessorsPage() {
               Aucun professeur pour le moment.
             </div>
           ) : (
-            <div className="table-responsive">
-              <table className="table align-middle mb-0">
-                <thead className="table-light">
-                  <tr>
-                    <th>Nom</th>
-                    <th>Prénom</th>
-                    <th>Spécialité</th>
-                    <th>Classe</th>
-                    <th style={{ width: 180 }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {list.map((u) => (
-                    <tr key={u.docId}>
-                      <td className="fw-semibold">{u.nom}</td>
-                      <td>{u.prenom}</td>
-                      <td>{u.specialite || "-"}</td>
-                      <td>{u.classe_libelle || "-"}</td>
-                      <td className="d-flex gap-2">
-                        <button
-                          className="btn btn-outline-secondary btn-sm"
-                          onClick={() => openDetails(u.docId)}
-                        >
-                          Voir plus
-                        </button>
-                        {/* hooks futurs: modifier/supprimer rapides si besoin */}
-                      </td>
+            <>
+              <div className="table-responsive">
+                <table className="table align-middle mb-0">
+                  <thead className="table-light">
+                    <tr>
+                      <th>Nom</th>
+                      <th>Prénom</th>
+                      <th>Spécialité</th>
+                      <th>Classe</th>
+                      <th style={{ width: 180 }}>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {list.map((u) => (
+                      <tr key={u.docId}>
+                        <td className="fw-semibold">{u.nom}</td>
+                        <td>{u.prenom}</td>
+                        <td>{u.specialite || "-"}</td>
+                        <td>{u.classe_libelle || "-"}</td>
+                        <td className="d-flex gap-2">
+                          <button
+                            className="btn btn-outline-secondary btn-sm"
+                            onClick={() => openDetails(u.docId)}
+                          >
+                            Voir plus
+                          </button>
+                          {/* hooks futurs: modifier/supprimer rapides si besoin */}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              <div className="p-3 d-flex justify-content-center">
+                {hasMore ? (
+                  <button
+                    className="btn btn-outline-primary"
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" />
+                        Chargement…
+                      </>
+                    ) : (
+                      "Charger plus"
+                    )}
+                  </button>
+                ) : (
+                  <span className="text-muted small">
+                    Fin de la liste des professeurs.
+                  </span>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -385,7 +520,12 @@ export default function ProfessorsPage() {
       {/* Modal détails */}
       {showDetails && (
         <>
-          <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
+          <div
+            className="modal fade show"
+            style={{ display: "block" }}
+            aria-modal="true"
+            role="dialog"
+          >
             <div className="modal-dialog modal-lg modal-dialog-centered">
               <div className="modal-content">
                 <div className="modal-header">
@@ -393,7 +533,11 @@ export default function ProfessorsPage() {
                     <i className="bi bi-person-vcard me-2" />
                     Détails du professeur
                   </h5>
-                  <button type="button" className="btn-close" onClick={() => setShowDetails(false)} />
+                  <button
+                    type="button"
+                    className="btn-close"
+                    onClick={() => setShowDetails(false)}
+                  />
                 </div>
 
                 <div className="modal-body">
@@ -454,12 +598,11 @@ export default function ProfessorsPage() {
                           <label className="form-label">Spécialité</label>
                           <input
                             className="form-control"
-                            value={details.specialite || details.specialty || ""}
+                            value={details.specialite || ""}
                             onChange={(e) =>
                               setDetails({
                                 ...details,
                                 specialite: e.target.value,
-                                specialty: e.target.value,
                               })
                             }
                             readOnly={!editMode}
@@ -471,7 +614,10 @@ export default function ProfessorsPage() {
                             className="form-control"
                             value={details.telephone || ""}
                             onChange={(e) =>
-                              setDetails({ ...details, telephone: e.target.value })
+                              setDetails({
+                                ...details,
+                                telephone: e.target.value,
+                              })
                             }
                             readOnly={!editMode}
                           />
@@ -494,7 +640,9 @@ export default function ProfessorsPage() {
                       {/* Affectation classe */}
                       <div className="row g-2 align-items-end">
                         <div className="col-md-8">
-                          <label className="form-label">Affecter à une classe</label>
+                          <label className="form-label">
+                            Affecter à une classe
+                          </label>
                           <select
                             className="form-select"
                             value={selectedClasseId}
@@ -532,15 +680,25 @@ export default function ProfessorsPage() {
                 </div>
 
                 <div className="modal-footer">
-                  <button className="btn btn-outline-secondary" onClick={() => setShowDetails(false)}>
+                  <button
+                    className="btn btn-outline-secondary"
+                    onClick={() => setShowDetails(false)}
+                  >
                     Fermer
                   </button>
                   {!editMode ? (
-                    <button className="btn btn-primary" onClick={() => setEditMode(true)}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => setEditMode(true)}
+                    >
                       Modifier
                     </button>
                   ) : (
-                    <button className="btn btn-primary" onClick={saveEdition} disabled={savingEdit}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={saveEdition}
+                      disabled={savingEdit}
+                    >
                       {savingEdit ? (
                         <>
                           <span className="spinner-border spinner-border-sm me-2" />
@@ -551,14 +709,20 @@ export default function ProfessorsPage() {
                       )}
                     </button>
                   )}
-                  <button className="btn btn-outline-danger" onClick={deleteProfessor}>
+                  <button
+                    className="btn btn-outline-danger"
+                    onClick={deleteProfessor}
+                  >
                     Supprimer
                   </button>
                 </div>
               </div>
             </div>
           </div>
-          <div className="modal-backdrop fade show" onClick={() => setShowDetails(false)} />
+          <div
+            className="modal-backdrop fade show"
+            onClick={() => setShowDetails(false)}
+          />
         </>
       )}
 
@@ -577,6 +741,18 @@ export default function ProfessorsPage() {
       />
     </div>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Utils                                                              */
+/* ------------------------------------------------------------------ */
+function toRoleKey(label: string) {
+  return label
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // retire les accents
+    .replace(/[^a-z0-9]+/g, "-") // remplace espaces & co par "-"
+    .replace(/(^-|-$)/g, ""); // trim "-"
 }
 
 /* ------------------------------------------------------------------ */
@@ -603,8 +779,10 @@ function TeacherForm({
     password: "",
     role_id: "",
     first_login: "1",
-    specialty: "",
+    /** Champ canonique */
     specialite: "",
+    /** Détail optionnel */
+    specialite_detaillee: "",
     date_naissance: "",
     lieu_naissance: "",
     nationalite: "",
@@ -779,7 +957,7 @@ function TeacherForm({
         !teacherForm.email ||
         !teacherForm.login ||
         !teacherForm.password ||
-        !teacherForm.specialty
+        !teacherForm.specialite
       ) {
         showErrorToast("Veuillez remplir tous les champs obligatoires");
         return;
@@ -821,11 +999,21 @@ function TeacherForm({
       const usersSnapshot = await getDocs(collection(db, "users"));
       const newUserId = usersSnapshot.size + 1;
 
+      // role_key unique pour les requêtes (indexé)
+      const role_key =
+        roleObj.libelle === "Professeur"
+          ? ROLE_PROF_KEY
+          : toRoleKey(roleObj.libelle);
+
       await addDoc(collection(db, "users"), {
         ...teacherForm,
         id: newUserId,
-        role_id: roleObj.id,
-        role_libelle: roleObj.libelle, // utile pour les redirections
+        // Normalisation: stocker role_id en string
+        role_id: String(roleObj.id),
+        role_libelle: roleObj.libelle,
+        role_key,
+        // Compat descendante: dupliquer sur 'specialty'
+        specialty: teacherForm.specialite,
         documents: fileUrls,
       });
 
@@ -839,8 +1027,8 @@ function TeacherForm({
         password: "",
         role_id: "",
         first_login: "1",
-        specialty: "",
         specialite: "",
+        specialite_detaillee: "",
         date_naissance: "",
         lieu_naissance: "",
         nationalite: "",
@@ -972,22 +1160,25 @@ function TeacherForm({
           <input
             type="text"
             className="form-control"
-            value={teacherForm.specialty}
+            value={teacherForm.specialite}
             onChange={(e) =>
-              setTeacherForm({ ...teacherForm, specialty: e.target.value })
+              setTeacherForm({ ...teacherForm, specialite: e.target.value })
             }
             required
             placeholder="Spécialité du professeur"
           />
         </div>
         <div className="col-md-12">
-          <label className="form-label">Spécialité détaillée</label>
+          <label className="form-label">Spécialité détaillée (optionnel)</label>
           <input
             type="text"
             className="form-control"
-            value={teacherForm.specialite}
+            value={teacherForm.specialite_detaillee}
             onChange={(e) =>
-              setTeacherForm({ ...teacherForm, specialite: e.target.value })
+              setTeacherForm({
+                ...teacherForm,
+                specialite_detaillee: e.target.value,
+              })
             }
             placeholder="Ex: Développeur/Developpeuse FullStack"
           />
@@ -1536,11 +1727,7 @@ function TeacherForm({
                       onChange={(e) => {
                         const arr = [...experience.etablissements];
                         arr[etabIndex] = e.target.value;
-                        handleExperienceChange(
-                          index,
-                          "etablissements",
-                          arr
-                        );
+                        handleExperienceChange(index, "etablissements", arr);
                       }}
                       placeholder="Nom de l'établissement"
                     />
@@ -1551,11 +1738,7 @@ function TeacherForm({
                         onClick={() => {
                           const arr = [...experience.etablissements];
                           arr.splice(etabIndex, 1);
-                          handleExperienceChange(
-                            index,
-                            "etablissements",
-                            arr
-                          );
+                          handleExperienceChange(index, "etablissements", arr);
                         }}
                       >
                         <i className="bi bi-trash" />
