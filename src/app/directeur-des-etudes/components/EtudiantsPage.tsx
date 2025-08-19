@@ -4,6 +4,7 @@
 import React from "react";
 import {
   collection,
+  addDoc,
   getDocs,
   getDoc,
   updateDoc,
@@ -25,7 +26,6 @@ type TClasse = {
   libelle: string;
   filiere_libelle?: string;
   niveau?: string;
-  // On tentera de lire ces champs dans le doc de classe si disponibles
   filiere_id?: string;
   niveau_id?: string;
 };
@@ -39,11 +39,11 @@ type TUser = {
 };
 
 type View =
-  | { type: "cards" } // cartes des classes
-  | { type: "classe"; classe: TClasse } // liste d'une classe
-  | { type: "fiche"; student: TUser; classe: TClasse }; // fiche étudiant
+  | { type: "cards" }
+  | { type: "classe"; classe: TClasse }
+  | { type: "fiche"; student: TUser; classe: TClasse };
 
-/** (Optionnel) désactivation de la nav secondaire si nécessaire */
+/** (Optionnel) désactivation de la nav secondaire */
 function useDisableVerticalNav2() {
   React.useEffect(() => {
     document.body.setAttribute("data-nav2-disabled", "true");
@@ -107,7 +107,7 @@ export default function EtudiantsPage() {
       <div className="d-flex flex-wrap justify-content-between align-items-end mb-3">
         <div>
           <h3 className="mb-1">Étudiants</h3>
-          <div className="text-muted">Gestion des étudiants par classe</div>
+          <div className="text-muted">Gestion des inscriptions / réinscriptions</div>
         </div>
         <div className="d-flex align-items-end gap-2">
           <div>
@@ -162,18 +162,8 @@ export default function EtudiantsPage() {
       )}
 
       {/* Toasts */}
-      <Toast
-        message={toastMsg}
-        type="success"
-        show={sok}
-        onClose={() => setSOk(false)}
-      />
-      <Toast
-        message={toastMsg}
-        type="error"
-        show={serr}
-        onClose={() => setSErr(false)}
-      />
+      <Toast message={toastMsg} type="success" show={sok} onClose={() => setSOk(false)} />
+      <Toast message={toastMsg} type="error" show={serr} onClose={() => setSErr(false)} />
     </div>
   );
 }
@@ -213,10 +203,7 @@ function ClassesCards({
                       {c.filiere_libelle || ""}
                     </small>
                     <div className="mt-auto pt-2">
-                      <button
-                        className="btn btn-outline-secondary"
-                        onClick={() => onOpen(c)}
-                      >
+                      <button className="btn btn-outline-secondary" onClick={() => onOpen(c)}>
                         Ouvrir la liste
                       </button>
                     </div>
@@ -231,7 +218,7 @@ function ClassesCards({
   );
 }
 
-/* ======================= Liste des étudiants d’une classe ======================= */
+/* ======================= Liste des étudiants d’une classe (via inscriptions) ======================= */
 function ClasseStudents({
   annee,
   classe,
@@ -248,44 +235,38 @@ function ClasseStudents({
   ko: (m: string) => void;
 }) {
   const [loading, setLoading] = React.useState(true);
-  const [rows, setRows] = React.useState<TUser[]>([]);
-  const [showCreate, setShowCreate] = React.useState(false);
+  const [rows, setRows] = React.useState<(TUser & { inscription_id: string })[]>([]);
+  const [showCreateEnroll, setShowCreateEnroll] = React.useState(false);
+  const [reinscrireFor, setReinscrireFor] = React.useState<TUser | null>(null);
 
   const fetchRows = React.useCallback(async () => {
     setLoading(true);
     try {
-      // 1) Cherche par ID de classe (nouvelle donnée)
-      const qById = query(
-        collection(db, "users"),
-        where("role_libelle", "==", "Etudiant"),
-        where("classe_id", "==", classe.id),
-        where("annee_academique", "==", annee)
+      const qy = query(
+        collection(db, "inscriptions"),
+        where("class_id", "==", classe.id),
+        where("annee", "==", annee),
+        where("statut", "==", "actif")
       );
-      let snap = await getDocs(qById);
+      const snap = await getDocs(qy);
 
-      // 2) Fallback : anciens users qui stockent le libellé au lieu de l'id
-      if (snap.empty) {
-        const qByLabel = query(
-          collection(db, "users"),
-          where("role_libelle", "==", "Etudiant"),
-          where("classe", "==", classe.libelle),
-          where("annee_academique", "==", annee)
-        );
-        snap = await getDocs(qByLabel);
+      const users: (TUser & { inscription_id: string })[] = [];
+      for (const d of snap.docs) {
+        const ins = d.data() as any;
+        const usnap = await getDoc(doc(db, "users", ins.student_id));
+        if (usnap.exists()) {
+          const u = usnap.data() as any;
+          users.push({
+            inscription_id: d.id,
+            id: usnap.id,
+            nom: u.nom ?? "",
+            prenom: u.prenom ?? "",
+            email: u.email ?? "",
+            telephone: u.telephone ?? "",
+            role_id: u.role_id,
+          });
+        }
       }
-
-      const users: TUser[] = snap.docs.map((d) => {
-        const u = d.data() as any;
-        return {
-          id: d.id,
-          nom: u.nom ?? "",
-          prenom: u.prenom ?? "",
-          email: u.email ?? "",
-          telephone: u.telephone ?? "",
-          role_id: u.role_id,
-        };
-      });
-
       users.sort((a, b) => a.nom.localeCompare(b.nom));
       setRows(users);
     } catch (e) {
@@ -294,20 +275,16 @@ function ClasseStudents({
     } finally {
       setLoading(false);
     }
-  }, [annee, classe.id, classe.libelle, ko]);
+  }, [annee, classe.id, ko]);
 
   React.useEffect(() => {
     fetchRows();
   }, [fetchRows]);
 
-  // Retirer = enlever la classe du user
-  const retirerEtudiant = async (userId: string) => {
+  const retirerEtudiant = async (inscription_id: string) => {
     if (!confirm("Retirer cet étudiant de la classe ?")) return;
     try {
-      await updateDoc(doc(db, "users", userId), {
-        classe_id: "",
-        classe: "",
-      });
+      await updateDoc(doc(db, "inscriptions", inscription_id), { statut: "retire" });
       ok("Étudiant retiré.");
       fetchRows();
     } catch (e) {
@@ -327,12 +304,9 @@ function ClasseStudents({
             <h4 className="mb-1">{classe.libelle}</h4>
             <div className="text-muted">{annee}</div>
           </div>
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowCreate(true)}
-          >
+          <button className="btn btn-primary" onClick={() => setShowCreateEnroll(true)}>
             <i className="bi bi-person-plus me-2" />
-            Créer un étudiant
+            Inscrire un étudiant
           </button>
         </div>
 
@@ -341,7 +315,7 @@ function ClasseStudents({
             <div className="spinner-border" />
           </div>
         ) : rows.length === 0 ? (
-          <div className="text-muted">Aucun étudiant pour {annee}.</div>
+          <div className="text-muted">Aucun étudiant inscrit pour {annee}.</div>
         ) : (
           <div className="table-responsive">
             <table className="table align-middle">
@@ -351,7 +325,7 @@ function ClasseStudents({
                   <th>Prénom</th>
                   <th>Email</th>
                   <th>Téléphone</th>
-                  <th style={{ width: 220 }}>Actions</th>
+                  <th style={{ width: 260 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -369,8 +343,14 @@ function ClasseStudents({
                         Voir
                       </button>
                       <button
+                        className="btn btn-outline-primary btn-sm"
+                        onClick={() => setReinscrireFor(u)}
+                      >
+                        Réinscrire
+                      </button>
+                      <button
                         className="btn btn-outline-danger btn-sm"
-                        onClick={() => retirerEtudiant(u.id)}
+                        onClick={() => retirerEtudiant(u.inscription_id)}
                       >
                         Retirer
                       </button>
@@ -383,15 +363,30 @@ function ClasseStudents({
         )}
       </div>
 
-      {/* Modal: Créer (formulaire complet) */}
-      {showCreate && (
-        <CreateStudentModal
+      {/* Modal: Créer + inscrire */}
+      {showCreateEnroll && (
+        <CreateAndEnrollModal
           annee={annee}
           classe={classe}
-          onClose={() => setShowCreate(false)}
+          onClose={() => setShowCreateEnroll(false)}
           onDone={() => {
-            setShowCreate(false); // ferme le modal
-            fetchRows();          // refresh la liste
+            setShowCreateEnroll(false);
+            fetchRows();
+          }}
+          ok={ok}
+          ko={ko}
+        />
+      )}
+
+      {/* Modal: Réinscrire */}
+      {reinscrireFor && (
+        <ReinscrireModal
+          student={reinscrireFor}
+          anneeCourante={annee}
+          onClose={() => setReinscrireFor(null)}
+          onDone={() => {
+            setReinscrireFor(null);
+            fetchRows();
           }}
           ok={ok}
           ko={ko}
@@ -479,9 +474,7 @@ function StudentFiche({
               <input
                 className="form-control"
                 value={details.email || ""}
-                onChange={(e) =>
-                  setDetails({ ...details, email: e.target.value })
-                }
+                onChange={(e) => setDetails({ ...details, email: e.target.value })}
               />
             </div>
             <div className="col-md-4">
@@ -489,12 +482,10 @@ function StudentFiche({
               <input
                 className="form-control"
                 value={details.telephone || ""}
-                onChange={(e) =>
-                  setDetails({ ...details, telephone: e.target.value })
-                }
+                onChange={(e) => setDetails({ ...details, telephone: e.target.value })}
               />
             </div>
-            {/* Ajoutez d’autres champs au besoin */}
+            {/* Ajoute d’autres champs si nécessaire */}
           </div>
         )}
       </div>
@@ -502,8 +493,8 @@ function StudentFiche({
   );
 }
 
-/* ======================= Modal: créer (sans inscriptions) ======================= */
-function CreateStudentModal({
+/* ======================= Modal: créer + inscrire ======================= */
+function CreateAndEnrollModal({
   annee,
   classe,
   onClose,
@@ -519,59 +510,35 @@ function CreateStudentModal({
   ko: (m: string) => void;
 }) {
   const [loading, setLoading] = React.useState(true);
-  const [roles, setRoles] = React.useState<{ id: string; libelle: string }[]>(
+  const [roles, setRoles] = React.useState<{ id: string; libelle: string }[]>([]);
+  const [niveaux, setNiveaux] = React.useState<{ id: string; libelle: string }[]>([]);
+  const [filieres, setFilieres] = React.useState<{ id: string; libelle: string }[]>(
     []
   );
-  const [niveaux, setNiveaux] = React.useState<{ id: string; libelle: string }[]>(
-    []
-  );
-  const [filieres, setFilieres] = React.useState<
-    { id: string; libelle: string }[]
-  >([]);
   const [partenaires, setPartenaires] = React.useState<
     { id: string; libelle: string }[]
   >([]);
-  const [classeMeta, setClasseMeta] = React.useState<{
-    niveau_id?: string;
-    filiere_id?: string;
-  }>({});
 
   React.useEffect(() => {
     (async () => {
       try {
-        // rôles
         const r = await getDocs(collection(db, "roles"));
-        const R: { id: string; libelle: string }[] = [];
-        r.forEach((d) => R.push({ id: d.id, libelle: (d.data() as any).libelle }));
-        setRoles(R);
+        setRoles(r.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle })));
 
-        // niveaux
         const n = await getDocs(collection(db, "niveaux"));
-        const N: { id: string; libelle: string }[] = [];
-        n.forEach((d) => N.push({ id: d.id, libelle: (d.data() as any).libelle }));
-        setNiveaux(N);
+        setNiveaux(
+          n.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle }))
+        );
 
-        // filières
         const f = await getDocs(collection(db, "filieres"));
-        const F: { id: string; libelle: string }[] = [];
-        f.forEach((d) => F.push({ id: d.id, libelle: (d.data() as any).libelle }));
-        setFilieres(F);
+        setFilieres(
+          f.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle }))
+        );
 
-        // partenaires (bourses)
         const p = await getDocs(collection(db, "partenaires"));
-        const P: { id: string; libelle: string }[] = [];
-        p.forEach((d) => P.push({ id: d.id, libelle: (d.data() as any).libelle }));
-        setPartenaires(P);
-
-        // récupérer niveau_id / filiere_id réels de la classe si dispo
-        const csnap = await getDoc(doc(db, "classes", classe.id));
-        if (csnap.exists()) {
-          const v = csnap.data() as any;
-          setClasseMeta({
-            niveau_id: v.niveau_id,
-            filiere_id: v.filiere_id,
-          });
-        }
+        setPartenaires(
+          p.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle }))
+        );
       } catch (e) {
         console.error(e);
         ko("Erreur de chargement des données du formulaire.");
@@ -579,25 +546,38 @@ function CreateStudentModal({
         setLoading(false);
       }
     })();
-  }, [classe.id, ko]);
+  }, [ko]);
 
-  // Quand l’étudiant est créé dans EtudiantForm, on le rattache
   const handleCreated = async (userId: string) => {
     try {
-      await updateDoc(doc(db, "users", userId), {
-        // on force le rattachement à la classe ouverte
-        classe_id: classe.id,
-        classe: classe.libelle,
-        annee_academique: annee,
-        // si la classe possède ces ids, on les pose aussi
-        ...(classeMeta.niveau_id ? { niveau_id: classeMeta.niveau_id } : {}),
-        ...(classeMeta.filiere_id ? { filiere_id: classeMeta.filiere_id } : {}),
+      const exist = await getDocs(
+        query(
+          collection(db, "inscriptions"),
+          where("student_id", "==", userId),
+          where("annee", "==", annee),
+          where("class_id", "==", classe.id),
+          where("statut", "==", "actif")
+        )
+      );
+      if (!exist.empty) {
+        ok("Étudiant déjà inscrit pour cette année dans cette classe.");
+        onDone();
+        return;
+      }
+
+      await addDoc(collection(db, "inscriptions"), {
+        student_id: userId,
+        class_id: classe.id,
+        annee,
+        statut: "actif",
+        created_at: Date.now(),
       });
-      ok("Étudiant créé et rattaché à la classe.");
-      onDone(); // ferme + refresh
+
+      ok("Étudiant créé et inscrit.");
+      onDone();
     } catch (e) {
       console.error(e);
-      ko("Étudiant créé, mais rattachement à la classe impossible.");
+      ko("Étudiant créé, mais inscription impossible.");
     }
   };
 
@@ -608,7 +588,7 @@ function CreateStudentModal({
           <div className="modal-content">
             <div className="modal-header">
               <div>
-                <h5 className="modal-title">Créer un étudiant</h5>
+                <h5 className="modal-title">Inscrire un étudiant</h5>
                 <small className="text-muted">
                   {classe.libelle} • {annee}
                 </small>
@@ -632,6 +612,157 @@ function CreateStudentModal({
                   onCreated={handleCreated}
                 />
               )}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop fade show" onClick={onClose} />
+    </>
+  );
+}
+
+/* ======================= Modal: réinscription (par étudiant) ======================= */
+function ReinscrireModal({
+  student,
+  anneeCourante,
+  onClose,
+  onDone,
+  ok,
+  ko,
+}: {
+  student: TUser;
+  anneeCourante: AnneeScolaire;
+  onClose: () => void;
+  onDone: () => void;
+  ok: (m: string) => void;
+  ko: (m: string) => void;
+}) {
+  const [classes, setClasses] = React.useState<TClasse[]>([]);
+  const [annee, setAnnee] = React.useState<AnneeScolaire>(anneeCourante);
+  const [classId, setClassId] = React.useState<string>("");
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const csnap = await getDocs(collection(db, "classes"));
+        const cls: TClasse[] = [];
+        csnap.forEach((d) => {
+          const v = d.data() as any;
+          cls.push({
+            id: d.id,
+            libelle: v.libelle,
+            filiere_libelle: v.filiere_libelle,
+            niveau: v.niveau,
+          });
+        });
+        cls.sort((a, b) => a.libelle.localeCompare(b.libelle));
+        setClasses(cls);
+      } catch (e) {
+        console.error(e);
+        ko("Erreur de chargement des classes.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [ko]);
+
+  const valider = async () => {
+    if (!classId) return ko("Sélectionnez une classe.");
+    try {
+      const exist = await getDocs(
+        query(
+          collection(db, "inscriptions"),
+          where("student_id", "==", student.id),
+          where("annee", "==", annee),
+          where("class_id", "==", classId),
+          where("statut", "==", "actif")
+        )
+      );
+      if (!exist.empty) return ko("Déjà inscrit dans cette classe pour cette année.");
+
+      await addDoc(collection(db, "inscriptions"), {
+        student_id: student.id,
+        class_id: classId,
+        annee,
+        statut: "actif",
+        created_at: Date.now(),
+      });
+
+      ok("Réinscription enregistrée.");
+      onDone();
+    } catch (e) {
+      console.error(e);
+      ko("Impossible d’enregistrer la réinscription.");
+    }
+  };
+
+  return (
+    <>
+      <div className="modal fade show" style={{ display: "block" }}>
+        <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-content">
+            <div className="modal-header">
+              <div>
+                <h5 className="modal-title">
+                  Réinscrire {student.prenom} {student.nom}
+                </h5>
+              </div>
+              <button className="btn-close" onClick={onClose} />
+            </div>
+            <div className="modal-body">
+              {loading ? (
+                <div className="text-center py-4">
+                  <div className="spinner-border" />
+                </div>
+              ) : (
+                <div className="row g-3">
+                  <div className="col-12">
+                    <label className="form-label">Année scolaire</label>
+                    <select
+                      className="form-select"
+                      value={annee}
+                      onChange={(e) => setAnnee(e.target.value as AnneeScolaire)}
+                    >
+                      {ANNEES.map((a) => (
+                        <option key={a} value={a}>
+                          {a}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label">Classe</label>
+                    <select
+                      className="form-select"
+                      value={classId}
+                      onChange={(e) => setClassId(e.target.value)}
+                    >
+                      <option value="">— Sélectionner —</option>
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.libelle}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-12">
+                    <small className="text-muted">
+                      Une nouvelle inscription est créée. Les années antérieures restent inchangées
+                      (historique conservé).
+                    </small>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline-secondary" onClick={onClose}>
+                Annuler
+              </button>
+              <button className="btn btn-primary" onClick={valider}>
+                Valider
+              </button>
             </div>
           </div>
         </div>
