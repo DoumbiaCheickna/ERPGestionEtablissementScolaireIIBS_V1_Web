@@ -243,6 +243,7 @@ export default function UsersManagement() {
           <div className="card border-0 shadow-sm">
             <div className="card-header bg-white border-0 py-3">
               <ul className="nav nav-tabs card-header-tabs">
+                {/*
                 <li className="nav-item">
                   <button 
                     className={`nav-link ${activeTab === 'student' ? 'active' : ''}`}
@@ -261,6 +262,7 @@ export default function UsersManagement() {
                     Ajouter un professeur
                   </button>
                 </li>
+                */}
                 <li className="nav-item">
                   <button 
                     className={`nav-link ${activeTab === 'admin' ? 'active' : ''}`}

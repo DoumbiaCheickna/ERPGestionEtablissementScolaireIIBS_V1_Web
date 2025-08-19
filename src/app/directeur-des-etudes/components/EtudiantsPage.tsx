@@ -10,6 +10,8 @@ import {
   updateDoc,
   query,
   where,
+  orderBy,
+  limit,
   doc,
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
@@ -396,7 +398,7 @@ function ClasseStudents({
   );
 }
 
-/* ======================= Fiche étudiant ======================= */
+/* ======================= Fiche étudiant — toutes les infos ======================= */
 function StudentFiche({
   student,
   annee,
@@ -414,6 +416,7 @@ function StudentFiche({
 }) {
   const [details, setDetails] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
+  const [edit, setEdit] = React.useState(false);
 
   React.useEffect(() => {
     const load = async () => {
@@ -435,11 +438,79 @@ function StudentFiche({
     try {
       await updateDoc(doc(db, "users", student.id), details);
       ok("Fiche mise à jour.");
+      setEdit(false);
     } catch (e) {
       console.error(e);
       ko("Impossible de sauvegarder.");
     }
   };
+
+  const set = (path: string, value: any) => {
+    const next = { ...details };
+    const keys = path.split(".");
+    let ref: any = next;
+    keys.forEach((k, i) => {
+      if (i === keys.length - 1) ref[k] = value;
+      else {
+        ref[k] = ref[k] ?? {};
+        ref = ref[k];
+      }
+    });
+    setDetails(next);
+  };
+
+  const v = (path: string, fallback: any = "") => {
+    const keys = path.split(".");
+    let ref: any = details ?? {};
+    for (const k of keys) {
+      if (ref == null) return fallback;
+      ref = ref[k];
+    }
+    return ref ?? fallback;
+  };
+
+  const Input = ({
+    label,
+    path,
+    type = "text",
+    as = "input",
+    placeholder,
+  }: {
+    label: string;
+    path: string;
+    type?: string;
+    as?: "input" | "select" | "textarea";
+    placeholder?: string;
+  }) => (
+    <div className="col-md-4">
+      <label className="form-label">{label}</label>
+      {as === "select" ? (
+        <select
+          className="form-select"
+          value={v(path, "")}
+          onChange={(e) => set(path, e.target.value)}
+          disabled={!edit}
+        />
+      ) : as === "textarea" ? (
+        <textarea
+          className="form-control"
+          value={v(path, "")}
+          onChange={(e) => set(path, e.target.value)}
+          placeholder={placeholder}
+          disabled={!edit}
+        />
+      ) : (
+        <input
+          className="form-control"
+          type={type}
+          value={v(path, "")}
+          onChange={(e) => set(path, type === "number" ? Number(e.target.value) : e.target.value)}
+          placeholder={placeholder}
+          disabled={!edit}
+        />
+      )}
+    </div>
+  );
 
   return (
     <div className="card border-0 shadow-sm">
@@ -457,9 +528,20 @@ function StudentFiche({
             </div>
           </div>
           <div className="d-flex gap-2">
-            <button className="btn btn-outline-primary" onClick={save}>
-              Modifier
-            </button>
+            {!edit ? (
+              <button className="btn btn-outline-primary" onClick={() => setEdit(true)}>
+                Modifier
+              </button>
+            ) : (
+              <>
+                <button className="btn btn-outline-secondary" onClick={() => setEdit(false)}>
+                  Annuler
+                </button>
+                <button className="btn btn-primary" onClick={save}>
+                  Enregistrer
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -468,25 +550,225 @@ function StudentFiche({
             <div className="spinner-border" />
           </div>
         ) : (
-          <div className="row g-3">
-            <div className="col-md-4">
-              <label className="form-label">Email</label>
-              <input
-                className="form-control"
-                value={details.email || ""}
-                onChange={(e) => setDetails({ ...details, email: e.target.value })}
-              />
+          <>
+            {/* Informations personnelles */}
+            <h5 className="fw-bold mt-2">Informations personnelles</h5>
+            <hr />
+            <div className="row g-3">
+              <Input label="Prénom" path="prenom" />
+              <Input label="Nom" path="nom" />
+              <Input label="Email" path="email" type="email" />
+              <Input label="Téléphone" path="telephone" />
+              <Input label="Login" path="login" />
+              <Input label="Date de naissance" path="date_naissance" type="date" />
+              <Input label="Lieu de naissance" path="lieu_naissance" />
+              <Input label="Nationalité" path="nationalite" />
+              <div className="col-md-4">
+                <label className="form-label">Sexe</label>
+                <select
+                  className="form-select"
+                  value={v("sexe", "")}
+                  onChange={(e) => set("sexe", e.target.value)}
+                  disabled={!edit}
+                >
+                  <option value="">Sélectionner</option>
+                  <option value="M">Masculin</option>
+                  <option value="F">Féminin</option>
+                </select>
+              </div>
+              <Input label="CNI/Passeport" path="cni_passeport" />
+              <Input label="Adresse" path="adresse" />
+              <div className="col-md-4">
+                <label className="form-label">Situation matrimoniale</label>
+                <select
+                  className="form-select"
+                  value={v("situation_matrimoniale", "")}
+                  onChange={(e) => set("situation_matrimoniale", e.target.value)}
+                  disabled={!edit}
+                >
+                  <option value="">Sélectionner</option>
+                  <option value="Célibataire">Célibataire</option>
+                  <option value="Marié(e)">Marié(e)</option>
+                  <option value="Divorcé(e)">Divorcé(e)</option>
+                  <option value="Veuf(ve)">Veuf(ve)</option>
+                </select>
+              </div>
+              <Input label="Nombre d'enfants" path="nombre_enfants" type="number" />
             </div>
-            <div className="col-md-4">
-              <label className="form-label">Téléphone</label>
-              <input
-                className="form-control"
-                value={details.telephone || ""}
-                onChange={(e) => setDetails({ ...details, telephone: e.target.value })}
-              />
+
+            {/* Informations académiques */}
+            <h5 className="fw-bold mt-4">Informations académiques</h5>
+            <hr />
+            <div className="row g-3">
+              <Input label="Programme" path="programme" />
+              <Input label="Niveau (id)" path="niveau_id" />
+              <Input label="Filière (id)" path="filiere_id" />
+              <Input label="Classe (id)" path="classe_id" />
+              <Input label="Classe (libellé)" path="classe" />
+              <Input label="Année académique" path="annee_academique" />
+              <div className="col-md-4">
+                <label className="form-label">Type d'inscription</label>
+                <select
+                  className="form-select"
+                  value={v("type_inscription", "")}
+                  onChange={(e) => set("type_inscription", e.target.value)}
+                  disabled={!edit}
+                >
+                  <option value="">Sélectionner</option>
+                  <option value="Nouveau">Inscription</option>
+                  <option value="Redoublant">Reinscription</option>
+                  <option value="Transfert">Transfert</option>
+                </select>
+              </div>
+              <Input label="Dernier établissement fréquenté" path="dernier_etablissement" />
             </div>
-            {/* Ajoute d’autres champs si nécessaire */}
-          </div>
+
+            {/* Diplôme obtenu */}
+            <h5 className="fw-bold mt-4">Diplôme obtenu</h5>
+            <hr />
+            <div className="row g-3">
+              <Input label="Série" path="diplome_obtenu.serie" />
+              <Input label="Année d'obtention" path="diplome_obtenu.annee_obtention" />
+              <div className="col-md-4">
+                <label className="form-label">Mention</label>
+                <select
+                  className="form-select"
+                  value={v("diplome_obtenu.mention", "")}
+                  onChange={(e) => set("diplome_obtenu.mention", e.target.value)}
+                  disabled={!edit}
+                >
+                  <option value="">Sélectionner</option>
+                  <option value="Passable">Passable</option>
+                  <option value="Assez-bien">Assez-bien</option>
+                  <option value="Bien">Bien</option>
+                  <option value="Très-Bien">Très-Bien</option>
+                  <option value="Excellent">Excellent</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Bourse */}
+            <h5 className="fw-bold mt-4">Bourse</h5>
+            <hr />
+            <div className="row g-3">
+              <div className="col-md-4">
+                <label className="form-label">Boursier</label>
+                <select
+                  className="form-select"
+                  value={v("boursier", "non")}
+                  onChange={(e) => set("boursier", e.target.value)}
+                  disabled={!edit}
+                >
+                  <option value="non">Non</option>
+                  <option value="oui">Oui</option>
+                </select>
+              </div>
+              <Input label="Fournisseur (id)" path="bourse_fournisseur" />
+              <Input label="Valeur" path="bourse_valeur" type="number" />
+            </div>
+
+            {/* Parents */}
+            <h5 className="fw-bold mt-4">Parents</h5>
+            <hr />
+            <div className="row g-3">
+              <Input label="Nom du père" path="parents.pere.nom" />
+              <Input label="Profession du père" path="parents.pere.profession" />
+              <Input label="Téléphone du père" path="parents.pere.telephone" />
+              <Input label="Nom de la mère" path="parents.mere.nom" />
+              <Input label="Profession de la mère" path="parents.mere.profession" />
+              <Input label="Téléphone de la mère" path="parents.mere.telephone" />
+              <Input label="Contact d'urgence — lien" path="parents.contact_urgence.lien" />
+              <Input label="Contact d'urgence — adresse" path="parents.contact_urgence.adresse" />
+              <Input label="Contact d'urgence — téléphone" path="parents.contact_urgence.telephone" />
+            </div>
+
+            {/* Informations médicales */}
+            <h5 className="fw-bold mt-4">Informations médicales</h5>
+            <hr />
+            <div className="row g-3">
+              <div className="col-md-3">
+                <label className="form-label">Groupe sanguin</label>
+                <select
+                  className="form-select"
+                  value={v("medical.groupe_sanguin", "")}
+                  onChange={(e) => set("medical.groupe_sanguin", e.target.value)}
+                  disabled={!edit}
+                >
+                  <option value="">Sélectionner</option>
+                  <option value="A+">A+</option>
+                  <option value="A-">A-</option>
+                  <option value="B+">B+</option>
+                  <option value="B-">B-</option>
+                  <option value="AB+">AB+</option>
+                  <option value="AB-">AB-</option>
+                  <option value="O+">O+</option>
+                  <option value="O-">O-</option>
+                </select>
+              </div>
+              <Input label="Allergies" path="medical.allergies" />
+              <Input label="Maladies" path="medical.maladies" />
+              <Input label="Handicap" path="medical.handicap" />
+            </div>
+
+            {/* Transport */}
+            <h5 className="fw-bold mt-4">Transport</h5>
+            <hr />
+            <div className="row g-3">
+              <div className="col-md-6">
+                <label className="form-label">Moyen</label>
+                <select
+                  className="form-select"
+                  value={v("transport.moyen", "")}
+                  onChange={(e) => set("transport.moyen", e.target.value)}
+                  disabled={!edit}
+                >
+                  <option value="">Sélectionner</option>
+                  <option value="Bus scolaire">Bus scolaire</option>
+                  <option value="Transport public">Transport public</option>
+                  <option value="Véhicule personnel">Véhicule personnel</option>
+                  <option value="Marche">Marche</option>
+                  <option value="Autre">Autre</option>
+                </select>
+              </div>
+              <Input label="Temps pour arriver au campus" path="transport.temps_campus" />
+            </div>
+
+            {/* Documents */}
+            <h5 className="fw-bold mt-4">Documents</h5>
+            <hr />
+            <div className="row g-3">
+              <div className="col-md-4 d-flex flex-column">
+                <span className="text-muted small mb-1">Copie du BAC</span>
+                {v("documents.copie_bac", null) ? (
+                  <a href={v("documents.copie_bac")} target="_blank" rel="noreferrer">
+                    Ouvrir la pièce jointe
+                  </a>
+                ) : (
+                  <span>—</span>
+                )}
+              </div>
+              <div className="col-md-4 d-flex flex-column">
+                <span className="text-muted small mb-1">Copie CNI / Passeport</span>
+                {v("documents.copie_cni", null) ? (
+                  <a href={v("documents.copie_cni")} target="_blank" rel="noreferrer">
+                    Ouvrir la pièce jointe
+                  </a>
+                ) : (
+                  <span>—</span>
+                )}
+              </div>
+              <div className="col-md-4 d-flex flex-column">
+                <span className="text-muted small mb-1">Relevé de notes</span>
+                {v("documents.releve_notes", null) ? (
+                  <a href={v("documents.releve_notes")} target="_blank" rel="noreferrer">
+                    Ouvrir la pièce jointe
+                  </a>
+                ) : (
+                  <span>—</span>
+                )}
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -526,19 +808,13 @@ function CreateAndEnrollModal({
         setRoles(r.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle })));
 
         const n = await getDocs(collection(db, "niveaux"));
-        setNiveaux(
-          n.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle }))
-        );
+        setNiveaux(n.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle })));
 
         const f = await getDocs(collection(db, "filieres"));
-        setFilieres(
-          f.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle }))
-        );
+        setFilieres(f.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle })));
 
         const p = await getDocs(collection(db, "partenaires"));
-        setPartenaires(
-          p.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle }))
-        );
+        setPartenaires(p.docs.map((d) => ({ id: d.id, libelle: (d.data() as any).libelle })));
       } catch (e) {
         console.error(e);
         ko("Erreur de chargement des données du formulaire.");
@@ -548,8 +824,27 @@ function CreateAndEnrollModal({
     })();
   }, [ko]);
 
+  // Renvoie le prochain 'id' auto-incrémenté pour la collection users
+  const getNextUserId = async (): Promise<number> => {
+    const q = query(collection(db, "users"), orderBy("id", "desc"), limit(1));
+    const snap = await getDocs(q);
+    if (snap.empty) return 1;
+    const max = Number((snap.docs[0].data() as any).id);
+    return Number.isFinite(max) ? max + 1 : 1;
+    // (simple, non transactionnel – OK si une seule source crée des étudiants)
+  };
+
+  // Quand l’étudiant est créé via EtudiantForm, on pose l'id auto-incrémenté, puis on crée l'inscription
   const handleCreated = async (userId: string) => {
     try {
+      // 1) Pose un id numérique (auto-incrément) sur le user pour compat Admin
+      const nextId = await getNextUserId();
+      await updateDoc(doc(db, "users", userId), {
+        id: nextId,
+        created_at: Date.now(),
+      });
+
+      // 2) Évite les doublons d'inscription
       const exist = await getDocs(
         query(
           collection(db, "inscriptions"),
@@ -565,6 +860,7 @@ function CreateAndEnrollModal({
         return;
       }
 
+      // 3) Crée l'inscription
       await addDoc(collection(db, "inscriptions"), {
         student_id: userId,
         class_id: classe.id,
@@ -577,7 +873,7 @@ function CreateAndEnrollModal({
       onDone();
     } catch (e) {
       console.error(e);
-      ko("Étudiant créé, mais inscription impossible.");
+      ko("Étudiant créé, mais échec lors de l’attribution de l’ID ou de l’inscription.");
     }
   };
 
