@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 import RolesPage from '../pages/roles/page';
@@ -14,25 +13,15 @@ export default function RenderHome() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // Onglet initial → depuis ?tab=... (fallback 'roles')
-  const urlTab = (searchParams.get('tab') || 'roles') as TabKey;
-  const [activeTab, setActiveTab] = useState<TabKey>(urlTab);
+  // Source de vérité = URL
+  const activeTab = (searchParams.get('tab') as TabKey) || 'roles';
 
-  // Si l’URL change (ex: via la navbar), on resynchronise l’onglet
-  useEffect(() => {
-    if (urlTab !== activeTab) setActiveTab(urlTab);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlTab]);
-
-  // Navigue et met à jour l’onglet (sans scroll en haut)
   const goTab = (tab: TabKey) => {
     if (tab === activeTab) return;
-    const next = `${pathname}?tab=${tab}`;
-    router.push(next, { scroll: false });
-    setActiveTab(tab);
+    router.push(`${pathname}?tab=${tab}`, { scroll: false });
   };
 
-  const renderContent = useMemo(() => {
+  const content = useMemo(() => {
     switch (activeTab) {
       case 'roles':
         return (
@@ -61,7 +50,7 @@ export default function RenderHome() {
     <div className="container mt-5">
       <h2 className="fw-bold">Bienvenue dans la Gestion Scolaire</h2>
 
-      {/* Onglets */}
+      {/* Onglets (même logique que la navbar) */}
       <ul className="nav nav-tabs mt-4">
         <li className="nav-item">
           <button
@@ -82,9 +71,7 @@ export default function RenderHome() {
       </ul>
 
       {/* Contenu */}
-      <div className="mt-3">
-        {renderContent}
-      </div>
+      <div className="mt-3">{content}</div>
     </div>
   );
 }

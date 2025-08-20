@@ -1,7 +1,6 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
 import Logo from '../../assets/iibs_logo.png';
 import React, { useState } from 'react';
 import { signOut } from 'firebase/auth';
@@ -21,14 +20,13 @@ export default function RenderNav() {
     if (loggingOut) return;
     setLoggingOut(true);
 
-    // Fallback : on redirige même si signOut tarde (réduit la sensation "page vide")
     let navigated = false;
     const fallback = setTimeout(() => {
       if (!navigated) {
         navigated = true;
         router.replace('/admin/auth/login');
       }
-    }, 500);
+    }, 300);
 
     try {
       await signOut(auth);
@@ -43,16 +41,22 @@ export default function RenderNav() {
     }
   };
 
-  // Helpers pour classes "active" du menu quand on est dans /admin/home
+  const gotoTab = (tab: 'roles' | 'users') => {
+    router.push(`/admin/home?tab=${tab}`, { scroll: false });
+  };
+
   const isRolesActive = onHome && currentTab === 'roles';
   const isUsersActive = onHome && currentTab === 'users';
 
   return (
     <nav className="navbar navbar-expand-lg bg-white border-bottom px-4 py-2">
       <div className="container-fluid">
-        <Link href="/admin/home?tab=roles" className="navbar-brand">
+        <button
+          className="navbar-brand btn btn-link p-0 text-decoration-none"
+          onClick={() => gotoTab('roles')}
+        >
           <Image src={Logo} alt="IIBS Logo" width={100} height={50} className="img-fluid" />
-        </Link>
+        </button>
 
         <button
           className="navbar-toggler"
@@ -69,24 +73,20 @@ export default function RenderNav() {
         <div className="collapse navbar-collapse justify-content-end" id="adminNavbar">
           <ul className="navbar-nav align-items-lg-center">
             <li className="nav-item">
-              {/* Va sur /admin/home et ouvre l’onglet Rôles */}
-              <Link
-                href="/admin/home?tab=roles"
-                className={`nav-link ${isRolesActive ? 'active fw-semibold' : ''}`}
-                aria-current={isRolesActive ? 'page' : undefined}
+              <button
+                className={`nav-link btn btn-link ${isRolesActive ? 'active fw-semibold' : ''}`}
+                onClick={() => gotoTab('roles')}
               >
                 Rôles
-              </Link>
+              </button>
             </li>
             <li className="nav-item">
-              {/* Va sur /admin/home et ouvre l’onglet Utilisateurs */}
-              <Link
-                href="/admin/home?tab=users"
-                className={`nav-link ${isUsersActive ? 'active fw-semibold' : ''}`}
-                aria-current={isUsersActive ? 'page' : undefined}
+              <button
+                className={`nav-link btn btn-link ${isUsersActive ? 'active fw-semibold' : ''}`}
+                onClick={() => gotoTab('users')}
               >
                 Utilisateurs
-              </Link>
+              </button>
             </li>
           </ul>
         </div>
