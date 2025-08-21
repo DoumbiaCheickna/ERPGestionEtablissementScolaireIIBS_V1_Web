@@ -1,13 +1,23 @@
-// src/app/admin/auth/login/page.tsx
 'use client';
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import Link from 'next/link';
 
-import { collection, getDocs, query, where, limit as fbLimit, doc, getDoc } from 'firebase/firestore';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import Link from 'next/link'; // (pas utilisé pour "Sign up" mais conservé si besoin d’autres liens)
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  limit as fbLimit,
+  doc,
+  getDoc
+} from 'firebase/firestore';
+import {
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail
+} from 'firebase/auth';
 
 import { db, auth } from '../../../../../firebaseConfig';
 import Logo from '../../assets/iibs_logo.png';
@@ -26,6 +36,10 @@ const normalizeLogin = (raw: string) => {
 };
 const loginNorm = (login: string) => login.toLowerCase();
 
+// Anti-injection très simple (supprime chevrons & contrôles)
+const sanitize = (v: string) =>
+  v.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').replace(/[<>]/g, '').trim();
+
 export default function Login() {
   const router = useRouter();
 
@@ -33,6 +47,14 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Forgot password modals
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [fpIdentifier, setFpIdentifier] = useState('');
+  const [fpLoading, setFpLoading] = useState(false);
+  const [fpError, setFpError] = useState<string | null>(null);
+  const [showCheckEmailModal, setShowCheckEmailModal] = useState(false);
+
+  // Toasts
   const [toastMessage, setToastMessage] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [showError, setShowError] = useState(false);
@@ -42,19 +64,19 @@ export default function Login() {
 
   /** Résout un email à partir d’un identifiant (email direct ou username). */
   const resolveEmail = async (id: string): Promise<{ email: string; userDocId?: string }> => {
-    const trimmed = id.trim();
+    const raw = sanitize(id);
+    const trimmed = raw.trim();
 
-    // S'il s'agit déjà d'un email, on le prend tel quel
+    // Email direct ?
     if (EMAIL_REGEX.test(trimmed)) {
       return { email: trimmed };
     }
 
     // Sinon, on considère un nom d'utilisateur -> on cherche l'email en base
-    // NB: nécessite des règles Firestore qui autorisent cette lecture (ou collection dédiée username->email)
     const usersCol = collection(db, 'users');
     const norm = loginNorm(normalizeLogin(trimmed));
 
-    // D'abord par login_norm (recommandé)
+    // D'abord par login_norm
     let snap = await getDocs(query(usersCol, where('login_norm', '==', norm), fbLimit(1)));
     if (!snap.empty) {
       const d = snap.docs[0];
@@ -90,10 +112,9 @@ export default function Login() {
       // 2) Auth Firebase (source de vérité du mot de passe)
       const cred = await signInWithEmailAndPassword(auth, email, password);
 
-      // 3) Charger la fiche dans `users` (nouveaux comptes: docId === uid ; anciens: fallback par email)
+      // 3) Charger la fiche dans `users`
       const uid = cred.user.uid;
       let userDocSnap = await getDoc(doc(db, 'users', uid));
-
       if (!userDocSnap.exists()) {
         const fallback = await getDocs(
           query(collection(db, 'users'), where('email', '==', email), fbLimit(1))
@@ -109,8 +130,8 @@ export default function Login() {
       const firstLoginRaw = userData?.first_login;
       const firstLogin = firstLoginRaw === '1' || firstLoginRaw === 1 || firstLoginRaw === true;
 
-      // 4) Stockage local pour le layout / navbar
-      localStorage.setItem('userLogin', userData?.login || identifier);
+      // 4) Stockage local
+      localStorage.setItem('userLogin', userData?.login || sanitize(identifier));
       if (roleLabelFromUser) localStorage.setItem('userRole', roleLabelFromUser);
 
       // 5) Redirection
@@ -125,38 +146,31 @@ export default function Login() {
         return;
       }
 
-      // Fallback si le libellé n’est pas stocké sur le user: on résout via la collection roles
+      // Résolution libellé via roles si besoin
       if (roleId) {
         try {
-          // doc direct
           const roleDoc = await getDoc(doc(db, 'roles', String(roleId)));
           let roleName = roleDoc.exists() ? (roleDoc.data() as any)?.libelle || '' : '';
-
-          // fallback par champ "id" si la docId n'est pas roleId
           if (!roleName) {
             const rs = await getDocs(
               query(collection(db, 'roles'), where('id', '==', roleId), fbLimit(1))
             );
             if (!rs.empty) roleName = (rs.docs[0].data() as any)?.libelle || '';
           }
-
           if (roleName) {
             localStorage.setItem('userRole', roleName);
             router.replace(routeForRole(roleName));
             return;
           }
-        } catch (e) {
-          // on ignore et on envoie sur /admin/home
+        } catch {
+          /* ignore */
         }
       }
 
-      // Si on n'a pas pu déterminer: route par défaut
       router.replace('/admin/home');
     } catch (error: any) {
       console.error('Erreur de connexion:', error);
       const code = error?.code || '';
-
-      // Messages plus clairs
       if (
         code === 'auth/invalid-credential' ||
         code === 'auth/wrong-password' ||
@@ -166,7 +180,6 @@ export default function Login() {
       } else if (error?.message?.includes("Aucun utilisateur")) {
         showErrorToast("Aucun utilisateur trouvé avec cet identifiant.");
       } else if (code === 'permission-denied') {
-        // Arrive si les règles Firestore empêchent la recherche du username avant login
         showErrorToast("Impossible de vérifier le nom d'utilisateur. Essayez avec votre email.");
       } else {
         showErrorToast('Erreur serveur, veuillez réessayer plus tard.');
@@ -176,27 +189,87 @@ export default function Login() {
     }
   };
 
-  return (
-    <div className="min-vh-100 d-flex align-items-center justify-content-center">
-      <div className="container">
-        <div className="row justify-content-center">
-          <div className="col-md-4">
-            <Image
-              src={Logo}
-              alt="IBS Logo"
-              className="img-fluid d-block mx-auto mb-4"
-              style={{ maxWidth: 220 }}
-            />
+  /* -------- Forgot Password Flow -------- */
+  const openForgot = () => {
+    setFpIdentifier('');
+    setFpError(null);
+    setShowForgotModal(true);
+  };
 
-            <form onSubmit={handleLogin}>
-              <div className="mb-3">
-                <label htmlFor="identifier" className="form-label fw-semibold">
+  const cancelForgot = () => {
+    setShowForgotModal(false);
+    setFpIdentifier('');
+    setFpError(null);
+  };
+
+  const submitForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (fpLoading) return;
+
+    const input = sanitize(fpIdentifier);
+    if (!input) {
+      setFpError("Veuillez saisir votre email ou nom d'utilisateur.");
+      return;
+    }
+
+    setFpLoading(true);
+    setFpError(null);
+
+    try {
+      const { email } = await resolveEmail(input);
+      await sendPasswordResetEmail(auth, email);
+
+      // Ferme le premier modal et ouvre la confirmation
+      setShowForgotModal(false);
+      setShowCheckEmailModal(true);
+    } catch (err: any) {
+      console.error('Forgot error:', err);
+      const code = err?.code || '';
+      if (err?.message?.includes('Aucun utilisateur')) {
+        setFpError("Aucun utilisateur trouvé avec cet identifiant.");
+      } else if (code === 'auth/invalid-email') {
+        setFpError("Adresse e-mail invalide.");
+      } else {
+        setFpError("Impossible d'envoyer l’email. Réessayez plus tard.");
+      }
+    } finally {
+      setFpLoading(false);
+    }
+  };
+
+  const closeCheckEmail = () => {
+    setShowCheckEmailModal(false);
+    // On “revient” sur la page de login : on y est déjà, on recentre juste le focus
+    // Optionnel : router.replace('/admin/auth/login');
+  };
+
+  /* -------- UI compacte (pas de scroll) -------- */
+  return (
+    <div className="min-vh-100 d-flex align-items-center justify-content-center" style={{ background: '#f8f9fb' }}>
+      <div className="container" style={{ maxWidth: 460 }}>
+        <div className="card shadow-sm border-0">
+          <div className="card-body p-4">
+            <div className="text-center mb-3">
+              <Image
+                src={Logo}
+                alt="IBS Logo"
+                className="img-fluid d-block mx-auto"
+                style={{ maxWidth: 160, height: 'auto' }}
+                priority
+              />
+            </div>
+
+            <h5 className="text-center fw-semibold mb-3">Connexion</h5>
+
+            <form onSubmit={handleLogin} className="mb-2">
+              <div className="mb-2">
+                <label htmlFor="identifier" className="form-label small fw-semibold mb-1">
                   Email ou nom d’utilisateur
                 </label>
                 <input
                   type="text"
                   id="identifier"
-                  className="form-control py-4 rounded-4 shadow-sm"
+                  className="form-control rounded-3 py-2"
                   placeholder="ex: jean@exemple.com ou j.dupont"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
@@ -206,13 +279,15 @@ export default function Login() {
                 />
               </div>
 
-              <div className="mb-3">
-                <label htmlFor="password" className="form-label fw-semibold">Mot de passe</label>
+              <div className="mb-2">
+                <label htmlFor="password" className="form-label small fw-semibold mb-1">
+                  Mot de passe
+                </label>
                 <input
                   type="password"
                   id="password"
-                  className="form-control py-4 rounded-4 shadow-sm"
-                  placeholder="Enter your password"
+                  className="form-control rounded-3 py-2"
+                  placeholder="Votre mot de passe"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -221,28 +296,29 @@ export default function Login() {
                 />
               </div>
 
-              <div className="d-grid">
-                <button
-                  className="btn btn-dark border fw-semibold mt-3 py-3"
-                  style={{ borderRadius: '15px', color: 'white' }}
-                  type="submit"
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <>
-                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                      Connexion...
-                    </>
-                  ) : (
-                    'Log In'
-                  )}
-                </button>
-              </div>
+              <button
+                className="btn btn-dark w-100 fw-semibold mt-2 py-2 rounded-3"
+                type="submit"
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    Connexion...
+                  </>
+                ) : (
+                  'Se connecter'
+                )}
+              </button>
 
-              <div className="text-center mt-5">
-                <Link href="#" className="text-decoration-none text-muted small">
-                  Dont have an account? <span className="text-primary">Sign up</span>
-                </Link>
+              <div className="text-center mt-2">
+                <button
+                  type="button"
+                  className="btn btn-link p-0 small"
+                  onClick={openForgot}
+                >
+                  Mot de passe oublié ?
+                </button>
               </div>
             </form>
 
@@ -262,6 +338,82 @@ export default function Login() {
           </div>
         </div>
       </div>
+
+      {/* -------- Modal: Saisir email/login pour reset -------- */}
+      {showForgotModal && (
+        <>
+          <div className="modal fade show" style={{ display: 'block' }} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <form onSubmit={submitForgot} noValidate>
+                  <div className="modal-header">
+                    <h6 className="modal-title fw-bold">Réinitialiser le mot de passe</h6>
+                    <button type="button" className="btn-close" onClick={cancelForgot} />
+                  </div>
+                  <div className="modal-body">
+                    <div className="mb-2">
+                      <label className="form-label small fw-semibold mb-1">Email ou nom d’utilisateur</label>
+                      <input
+                        type="text"
+                        className="form-control rounded-3 py-2"
+                        placeholder="Saisissez votre email ou login"
+                        value={fpIdentifier}
+                        onChange={(e) => setFpIdentifier(e.target.value)}
+                        autoFocus
+                      />
+                      {fpError && <div className="text-danger small mt-1">{fpError}</div>}
+                    </div>
+                    <div className="small text-muted">
+                      Nous enverrons un lien sécurisé à l’adresse e-Mail associée à votre compte. Vérifiez vos spams aussi.
+                    </div>
+                  </div>
+                  <div className="modal-footer">
+                    <button type="button" className="btn btn-outline-secondary" onClick={cancelForgot} disabled={fpLoading}>
+                      Annuler
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={fpLoading}>
+                      {fpLoading ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" />
+                          Envoi...
+                        </>
+                      ) : (
+                        'Envoyer le lien'
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={cancelForgot} />
+        </>
+      )}
+
+      {/* -------- Modal: Confirmation "Vérifiez votre mail" -------- */}
+      {showCheckEmailModal && (
+        <>
+          <div className="modal fade show" style={{ display: 'block' }} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h6 className="modal-title fw-bold">Vérifiez votre adresse mail</h6>
+                  <button type="button" className="btn-close" onClick={closeCheckEmail} />
+                </div>
+                <div className="modal-body">
+                  Un e-mail de réinitialisation a été envoyé. Veuillez suivre le lien reçu pour créer un nouveau mot de passe.
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-primary" onClick={closeCheckEmail}>
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={closeCheckEmail} />
+        </>
+      )}
     </div>
   );
 }
