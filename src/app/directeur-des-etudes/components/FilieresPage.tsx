@@ -17,6 +17,8 @@ import { db } from "../../../../firebaseConfig";
 import SecondaryMenu from "./SecondaryMenu";
 import Toast from "../../admin/components/ui/Toast";
 import { useAcademicYear } from "../context/AcademicYearContext";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 /* ================= Types & helpers ================= */
 
@@ -52,6 +54,7 @@ type View =
 const sanitize = (v: string) =>
   v.replace(/<\s*script/gi, "").replace(/[<>]/g, "").trim().slice(0, 5000);
 const ci = (s: string) => sanitize(s).toLowerCase();
+const safeFile = (s: string) => s.replace(/[^\p{L}\p{N}\-_. ]/gu, "_");
 
 const DEFAULT_NIVEAUX: TNiveauDoc[] = [
   { id: "L1", libelle: "Licence 1", order: 1 },
@@ -125,6 +128,63 @@ function ConfirmDeleteModal({
   );
 }
 
+/* ================= Helpers de suppression en cascade ================= */
+async function deleteClasseCascadeByDoc(classe: TClasse) {
+  const classId = classe.id;
+  const yearId = classe.academic_year_id;
+
+  // 1) matières de la classe+année
+  const mSnap = await getDocs(
+    query(collection(db, "matieres"), where("class_id", "==", classId), where("academic_year_id", "==", yearId))
+  );
+  await Promise.all(mSnap.docs.map((d) => deleteDoc(doc(db, "matieres", d.id))));
+
+  // 2) UE de la classe+année
+  const ueSnap = await getDocs(
+    query(collection(db, "ues"), where("class_id", "==", classId), where("academic_year_id", "==", yearId))
+  );
+  await Promise.all(ueSnap.docs.map((d) => deleteDoc(doc(db, "ues", d.id))));
+
+  // 3) EDT de la classe+année
+  const edtSnap = await getDocs(
+    query(collection(db, "edts"), where("class_id", "==", classId), where("annee", "==", yearId))
+  );
+  await Promise.all(edtSnap.docs.map((d) => deleteDoc(doc(db, "edts", d.id))));
+
+  // 4) Classe
+  await deleteDoc(doc(db, "classes", classId));
+}
+
+async function deleteFiliereCascadeByDoc(filiere: TFiliere) {
+  // Récupère toutes les classes de la filière (année courante)
+  const cSnap = await getDocs(
+    query(
+      collection(db, "classes"),
+      where("filiere_id", "==", filiere.id),
+      where("academic_year_id", "==", filiere.academic_year_id)
+    )
+  );
+  const classes: TClasse[] = [];
+  cSnap.forEach((d) => {
+    const v = d.data() as any;
+    classes.push({
+      id: d.id,
+      filiere_id: String(v.filiere_id),
+      filiere_libelle: String(v.filiere_libelle),
+      niveau_id: String(v.niveau_id || ""),
+      niveau_libelle: String(v.niveau_libelle || ""),
+      libelle: String(v.libelle),
+      academic_year_id: String(v.academic_year_id),
+    });
+  });
+
+  // Suppr. en cascade par classe
+  await Promise.all(classes.map((c) => deleteClasseCascadeByDoc(c)));
+
+  // Suppr. la filière
+  await deleteDoc(doc(db, "filieres", filiere.id));
+}
+
 /* ================= Entrée principale ================= */
 
 export default function FilieresPage() {
@@ -135,7 +195,6 @@ export default function FilieresPage() {
   const [section, setSection] = useState<SectionKey>("Gestion");
   const handleSelectSection = (s: SectionKey) => {
     setSection(s);
-    // Quel que soit l'endroit où on est, on revient sur la liste des filières
     setView({ type: "filieres" });
   };
 
@@ -249,7 +308,7 @@ function FilieresList({
   const [editError, setEditError] = useState<string | null>(null);
 
   // suppression (double confirmation)
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TFiliere | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -353,22 +412,22 @@ function FilieresList({
     }
   };
 
-  const askRemoveFiliere = (id: string) => {
+  const askRemoveFiliere = (f: TFiliere) => {
     setDeleteError(null);
-    setDeleteId(id);
+    setDeleteTarget(f);
   };
   const cancelRemoveFiliere = () => {
     setDeleteBusy(false);
     setDeleteError(null);
-    setDeleteId(null);
+    setDeleteTarget(null);
   };
   const confirmRemoveFiliere = async () => {
-    if (!deleteId) return;
+    if (!deleteTarget) return;
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      await deleteDoc(doc(db, "filieres", deleteId));
-      ok("Filière supprimée.");
+      await deleteFiliereCascadeByDoc(deleteTarget);
+      ok("Filière et données liées supprimées.");
       cancelRemoveFiliere();
       fetchFilieres();
     } catch (e) {
@@ -423,7 +482,7 @@ function FilieresList({
                       <button className="btn btn-outline-primary btn-sm" onClick={() => openEdit(f)}>
                         Modifier
                       </button>
-                      <button className="btn btn-outline-danger btn-sm" onClick={() => askRemoveFiliere(f.id)}>
+                      <button className="btn btn-outline-danger btn-sm" onClick={() => askRemoveFiliere(f)}>
                         Supprimer
                       </button>
                     </td>
@@ -507,12 +566,12 @@ function FilieresList({
 
       {/* Double confirmation suppression */}
       <ConfirmDeleteModal
-        show={!!deleteId}
+        show={!!deleteTarget}
         title="Supprimer cette filière ?"
         message={
           <div>
-            La filière sélectionnée sera supprimée. Pensez que ses classes, matières, UE, EDT associés
-            pourraient devenir incohérents si vous ne les nettoyez pas aussi.
+            La filière et <u>toutes ses classes</u> seront supprimées ; pour chaque classe, les UE, matières
+            et emplois du temps seront également supprimés.
           </div>
         }
         onCancel={cancelRemoveFiliere}
@@ -555,7 +614,7 @@ function FiliereClasses({
   const [addError, setAddError] = useState<string | null>(null);
 
   // suppression
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TClasse | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -613,6 +672,7 @@ function FiliereClasses({
 
   useEffect(() => {
     fetchNiveaux();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // présélection du premier niveau quand disponibles
@@ -664,22 +724,22 @@ function FiliereClasses({
     }
   };
 
-  const askRemoveClasse = (id: string) => {
+  const askRemoveClasse = (c: TClasse) => {
     setDeleteError(null);
-    setDeleteId(id);
+    setDeleteTarget(c);
   };
   const cancelRemoveClasse = () => {
     setDeleteBusy(false);
     setDeleteError(null);
-    setDeleteId(null);
+    setDeleteTarget(null);
   };
   const confirmRemoveClasse = async () => {
-    if (!deleteId) return;
+    if (!deleteTarget) return;
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      await deleteDoc(doc(db, "classes", deleteId));
-      ok("Classe supprimée.");
+      await deleteClasseCascadeByDoc(deleteTarget);
+      ok("Classe et données liées supprimées.");
       cancelRemoveClasse();
       fetchClasses();
     } catch (e) {
@@ -725,7 +785,7 @@ function FiliereClasses({
                       <button className="btn btn-outline-secondary" onClick={() => onOpenClasse(c)}>
                         Ouvrir
                       </button>
-                      <button className="btn btn-outline-danger" onClick={() => askRemoveClasse(c.id)}>
+                      <button className="btn btn-outline-danger" onClick={() => askRemoveClasse(c)}>
                         Supprimer
                       </button>
                     </div>
@@ -819,9 +879,14 @@ function FiliereClasses({
 
       {/* Double confirmation suppression */}
       <ConfirmDeleteModal
-        show={!!deleteId}
+        show={!!deleteTarget}
         title="Supprimer cette classe ?"
-        message={<div>La classe sera supprimée. Les matières, UE et emplois du temps liés devront être gérés en conséquence.</div>}
+        message={
+          <div>
+            La classe sera supprimée. Les <strong>matières</strong>, <strong>UE</strong> et
+            <strong> emplois du temps</strong> liés seront également supprimés.
+          </div>
+        }
         onCancel={cancelRemoveClasse}
         onConfirm={confirmRemoveClasse}
         busy={deleteBusy}
@@ -874,7 +939,6 @@ function ClasseDetail({
       <div className="card border-0 shadow-sm">
         <div className="card-body">
           <h4 className="mb-2">{classe.libelle}</h4>
-          {/* Masque des infos répétées si on est dans l'onglet EDT */}
           {tab !== "edt" && (
             <div className="text-muted mb-3">
               Filière : <strong>{filiere.libelle}</strong> — Niveau :{" "}
@@ -1188,7 +1252,6 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
 
       await deleteDoc(doc(db, "ues", ueDeleteId));
       ok("UE supprimée.");
-      // si c'était la valeur du filtre, on le réinitialise
       if (ueFilter === ueDeleteId) setUeFilter("");
       cancelRemoveUE();
       fetchAll();
@@ -1204,7 +1267,6 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
     setUeBulkBusy(true);
     setUeBulkError(null);
     try {
-      // Récupère toutes les UE de la classe/année
       const ueSnap = await getDocs(
         query(
           collection(db, "ues"),
@@ -1214,7 +1276,6 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
       );
       const ueIds = ueSnap.docs.map((d) => d.id);
 
-      // Nettoie toutes les matières référencées
       const mSnap = await getDocs(
         query(
           collection(db, "matieres"),
@@ -1754,7 +1815,7 @@ function EDTSection({
 }) {
   // filtres haut
   const [selectedSem, setSelectedSem] = React.useState<TSemestre>("S1");
-  const selectedYear = classe.academic_year_id; // année imposée par la classe
+  const selectedYear = classe.academic_year_id;
 
   // data
   const [matieres, setMatieres] = React.useState<TMatiere[]>([]);
@@ -1773,6 +1834,7 @@ function EDTSection({
     6: [],
   });
   const [createError, setCreateError] = React.useState<string | null>(null);
+  const [createBusy, setCreateBusy] = React.useState(false); // anti double clic
 
   // suppression EDT
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -1790,6 +1852,10 @@ function EDTSection({
   const [openDaysPreview, setOpenDaysPreview] = React.useState<number[]>([]);
   const toggleDayPreview = (day: number) =>
     setOpenDaysPreview((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
+
+  // PDF preview
+  const [pdfMode, setPdfMode] = React.useState(false);
+  const [pdfUrl, setPdfUrl] = React.useState<string>("");
 
   // Chargement
   React.useEffect(() => {
@@ -1871,11 +1937,19 @@ function EDTSection({
   };
 
   const saveEDT = async () => {
+    if (createBusy) return; // anti double clic
+    setCreateBusy(true);
     setCreateError(null);
     const allSlots = Object.values(draftSlots).flat();
     for (const s of allSlots) {
-      if (!s.matiere_id) return setCreateError("Sélectionnez une matière pour chaque ligne.");
-      if (!isValidRange(s.start, s.end)) return setCreateError("Vérifiez les horaires (début < fin).");
+      if (!s.matiere_id) {
+        setCreateBusy(false);
+        return setCreateError("Sélectionnez une matière pour chaque ligne.");
+      }
+      if (!isValidRange(s.start, s.end)) {
+        setCreateBusy(false);
+        return setCreateError("Vérifiez les horaires (début < fin).");
+      }
       s.matiere_libelle = matieres.find((m) => m.id === s.matiere_id)?.libelle ?? "";
       s.salle = sanitize(s.salle);
       s.enseignant = sanitize(s.enseignant);
@@ -1890,7 +1964,10 @@ function EDTSection({
           where("semestre", "==", createSem)
         )
       );
-      if (!dup.empty) return setCreateError("Un EDT existe déjà pour cette classe (même année & semestre).");
+      if (!dup.empty) {
+        setCreateBusy(false);
+        return setCreateError("Un EDT existe déjà pour cette classe (même année & semestre).");
+      }
 
       await addDoc(collection(db, "edts"), {
         class_id: classe.id,
@@ -1927,11 +2004,14 @@ function EDTSection({
     } catch (e) {
       console.error(e);
       setCreateError("Impossible d’enregistrer l’EDT.");
+    } finally {
+      setCreateBusy(false);
     }
   };
 
   /* ======== Prévisualiser / Modifier / Supprimer un EDT ======== */
   const openPreview = (edt: TEDT) => {
+    setPdfMode(false);
     setOpenDaysPreview([1, 2, 3, 4, 5, 6]);
     setPreview({
       open: true,
@@ -1940,9 +2020,19 @@ function EDTSection({
       draft: slotsToDraft(edt.slots),
     });
   };
-  const closePreview = () =>
+  const openPdfPreviewFromCard = (edt: TEDT) => {
+    openPreview(edt);
+    setPdfMode(true);
+  };
+  const closePreview = () => {
     setPreview({ open: false, edt: null, edit: false, draft: { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] } });
-  const toggleEdit = () => setPreview((p) => ({ ...p, edit: !p.edit }));
+    setPdfMode(false);
+    setPdfUrl("");
+  };
+  const toggleEdit = () => setPreview((p) => ({ ...p, edit: !p.edit, /* on sort du mode PDF si on édite */ }));
+  useEffect(() => {
+    if (preview.edit) setPdfMode(false);
+  }, [preview.edit]);
 
   const addPreviewSlot = (day: number) =>
     setPreview((p) => ({ ...p, draft: { ...p.draft, [day]: [...p.draft[day], emptySlot(day)] } }));
@@ -1998,7 +2088,6 @@ function EDTSection({
       await deleteDoc(doc(db, "edts", deleteId));
       ok("Emploi du temps supprimé.");
       cancelRemoveEDT();
-      // refresh local
       setEdts((prev) => prev.filter((e) => e.id !== deleteId));
     } catch (e) {
       console.error(e);
@@ -2007,9 +2096,120 @@ function EDTSection({
     }
   };
 
+  /* ======== PDF (vectoriel) ======== */
+  function buildPdf(edt: TEDT) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const margin = 48;
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // En-tête
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("Institut Informatique Business School", pageWidth / 2, margin, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    doc.text(
+      `Année scolaire : ${edt.annee}   •   Classe : ${classe.libelle}   •   Semestre : ${edt.semestre}`,
+      pageWidth / 2,
+      margin + 18,
+      { align: "center" }
+    );
+
+    let y = margin + 36;
+
+    const days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+    const grouped: Record<number, TEDTSlot[]> = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+    (edt.slots ?? []).forEach((s) => grouped[s.day].push(s));
+    Object.values(grouped).forEach((list) => list.sort((a, b) => toMinutes(a.start) - toMinutes(b.start)));
+
+    const addDayTitle = (title: string) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text(title, margin, y);
+      y += 8;
+      doc.setDrawColor(180);
+      doc.setLineWidth(0.7);
+      doc.line(margin, y, pageWidth - margin, y);
+      y += 10;
+    };
+
+    for (let d = 1; d <= 6; d++) {
+      const list = grouped[d] || [];
+      addDayTitle(days[d - 1]);
+
+      if (list.length === 0) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(11);
+        doc.text("—", margin, y + 10);
+        y += 22;
+        continue;
+      }
+
+      autoTable(doc, {
+        startY: y,
+        margin: { left: margin, right: margin },
+        head: [["Heure", "Matière", "Salle", "Enseignant"]],
+        body: list.map((s) => [
+          `${formatFR(s.start)} — ${formatFR(s.end)}`,
+          s.matiere_libelle || "",
+          s.salle || "—",
+          s.enseignant || "—",
+        ]),
+        styles: { font: "helvetica", fontSize: 10, cellPadding: 6, lineColor: [210, 210, 210], lineWidth: 0.2 },
+        headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: "bold" },
+        alternateRowStyles: { fillColor: [252, 252, 252] },
+        theme: "grid",
+        columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 250 }, 2: { cellWidth: 80, halign: "center" }, 3: { cellWidth: 140 } },
+        didDrawPage: () => {
+          const footerY = doc.internal.pageSize.getHeight() - margin + 8;
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(12);
+          doc.text("Directeur des Études", pageWidth - margin, footerY, { align: "right" });
+          const w = doc.getTextWidth("Directeur des Études");
+          doc.setDrawColor(0);
+          doc.setLineWidth(0.5);
+          doc.line(pageWidth - margin - w, footerY + 2, pageWidth - margin, footerY + 2);
+        },
+      });
+
+      y = (doc as any).lastAutoTable.finalY + 16;
+      if (y > doc.internal.pageSize.getHeight() - margin - 80 && d < 6) {
+        doc.addPage();
+        y = margin;
+      }
+    }
+
+    return doc;
+  }
+
+  async function buildPdfPreviewUrl(edt: TEDT): Promise<string> {
+    const doc = buildPdf(edt);
+    return doc.output("datauristring");
+  }
+
+  useEffect(() => {
+    const run = async () => {
+      if (pdfMode && preview.open && preview.edt) {
+        const url = await buildPdfPreviewUrl(preview.edt);
+        setPdfUrl(url);
+      } else {
+        setPdfUrl("");
+      }
+    };
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfMode, preview.open, preview.edt]);
+
+  const downloadPDF = () => {
+    if (!preview.edt) return;
+    const doc = buildPdf(preview.edt);
+    doc.save(safeFile(`EDT_${classe.libelle}_${preview.edt.semestre}_${preview.edt.annee}.pdf`));
+  };
+
   return (
     <div className="d-flex flex-column gap-3">
-      {/* EN-TÊTE allégée (pas d’infos répétées) */}
+      {/* EN-TÊTE allégée */}
       <div className="d-flex flex-wrap align-items-end gap-2">
         <div>
           <label className="form-label mb-1">Semestre</label>
@@ -2049,6 +2249,9 @@ function EDTSection({
                       <div className="mt-auto d-flex gap-2 pt-2">
                         <button className="btn btn-outline-secondary btn-sm" onClick={() => openPreview(edt)}>
                           Voir / Modifier
+                        </button>
+                        <button className="btn btn-outline-primary btn-sm" onClick={() => openPdfPreviewFromCard(edt)}>
+                          Exporter PDF
                         </button>
                         <button className="btn btn-outline-danger btn-sm" onClick={() => askRemoveEDT(edt.id)}>
                           Supprimer
@@ -2112,8 +2315,15 @@ function EDTSection({
                   <button className="btn btn-outline-secondary" onClick={() => setShowCreate(false)}>
                     Annuler
                   </button>
-                  <button className="btn btn-primary" onClick={saveEDT}>
-                    Enregistrer
+                  <button className="btn btn-primary" onClick={saveEDT} disabled={createBusy}>
+                    {createBusy ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" />
+                        Enregistrement…
+                      </>
+                    ) : (
+                      "Enregistrer"
+                    )}
                   </button>
                 </div>
               </div>
@@ -2123,7 +2333,7 @@ function EDTSection({
         </>
       )}
 
-      {/* MODAL VOIR / MODIFIER */}
+      {/* MODAL VOIR / MODIFIER / APERÇU PDF */}
       {preview.open && preview.edt && (
         <>
           <div className="modal fade show" style={{ display: "block" }}>
@@ -2136,11 +2346,24 @@ function EDTSection({
                       {preview.edt.semestre} • {preview.edt.annee}
                     </small>
                   </div>
-                  <div className="d-flex gap-2">
+                  <div className="d-flex gap-2 align-items-center">
                     {!preview.edit ? (
-                      <button className="btn btn-outline-primary" onClick={toggleEdit}>
-                        Modifier
-                      </button>
+                      <>
+                        <button className={`btn btn-outline-secondary ${pdfMode ? "" : "active"}`} onClick={() => setPdfMode(false)}>
+                          Vue
+                        </button>
+                        <button className={`btn btn-outline-secondary ${pdfMode ? "active" : ""}`} onClick={() => setPdfMode(true)}>
+                          Aperçu PDF
+                        </button>
+                        {pdfMode && (
+                          <button className="btn btn-primary" onClick={downloadPDF}>
+                            Télécharger PDF
+                          </button>
+                        )}
+                        <button className="btn btn-outline-primary" onClick={toggleEdit}>
+                          Modifier
+                        </button>
+                      </>
                     ) : (
                       <>
                         <button className="btn btn-outline-secondary" onClick={toggleEdit}>
@@ -2156,7 +2379,6 @@ function EDTSection({
                 </div>
 
                 <div className="modal-body">
-                  {/* Mode lecture / édition */}
                   {preview.edit ? (
                     renderDayEditors({
                       mode: "edit",
@@ -2168,6 +2390,16 @@ function EDTSection({
                       openDays: openDaysPreview,
                       onToggleDay: toggleDayPreview,
                     })
+                  ) : pdfMode ? (
+                    pdfUrl ? (
+                      <iframe
+                        title="aperçu-pdf"
+                        src={pdfUrl}
+                        style={{ width: "100%", height: "70vh", border: "1px solid #e5e7eb", borderRadius: 6 }}
+                      />
+                    ) : (
+                      <div className="text-muted">Génération du PDF…</div>
+                    )
                   ) : (
                     renderDayReadonly(preview.edt.slots)
                   )}
