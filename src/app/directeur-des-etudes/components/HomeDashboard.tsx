@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { useAcademicYear } from '../context/AcademicYearContext';
 import Toast from '../../admin/components/ui/Toast';
 
@@ -29,6 +30,17 @@ export default function HomeDashboard() {
       ko(e?.message || "Impossible de créer l'année académique.");
     }
   };
+
+  // ✅ Sync: persiste l'année sélectionnée pour toutes les pages
+  React.useEffect(() => {
+    if (selected?.label) {
+      try {
+        localStorage.setItem('app.selectedAnnee', selected.label);
+      } catch {}
+    }
+  }, [selected?.label]);
+
+  const selectedLabel = selected?.label || '';
 
   return (
     <div className="container-fluid px-0 mt-4">
@@ -62,6 +74,25 @@ export default function HomeDashboard() {
             <i className="bi bi-plus-lg me-1" />
             Créer une année
           </button>
+
+          {/* ✅ Accès direct à la page Étudiants avec ?annee=... */}
+          <Link
+            href={
+              selectedLabel
+                ? `/directeur-des-etudes/etudiants?annee=${encodeURIComponent(selectedLabel)}`
+                : `/directeur-des-etudes/etudiants`
+            }
+            className="btn btn-primary btn-sm"
+            onClick={() => {
+              // double sécurité si l’utilisateur ouvre dans un nouvel onglet
+              if (selectedLabel) {
+                try { localStorage.setItem('app.selectedAnnee', selectedLabel); } catch {}
+              }
+            }}
+          >
+            <i className="bi bi-people me-1" />
+            Ouvrir Étudiants
+          </Link>
         </div>
       </div>
 
