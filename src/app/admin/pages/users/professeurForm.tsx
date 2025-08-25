@@ -1,326 +1,1064 @@
-'use client';
+// src/app/directeur-des-etudes/components/ProfessorsPage.tsx
+"use client";
 
-import { useState } from 'react';
-import { collection, addDoc, getDocs } from "firebase/firestore";
+import React, { useEffect, useState } from "react";
+import {
+  collection,
+  addDoc,
+  getDocs,
+  query,
+  where,
+  DocumentData,
+  doc,
+  getDoc,
+  updateDoc,
+  deleteDoc,
+  orderBy,
+  limit,
+  startAfter,
+  QueryDocumentSnapshot,
+} from "firebase/firestore";
 import { db } from '../../../../../firebaseConfig';
+import Toast from "../..//../admin/components/ui/Toast";
 
-interface TeacherFormProps {
-  roles: { id: string; libelle: string }[];
-  matieres: { id: string; libelle: string }[];
-  showSuccessToast: (msg: string) => void;
-  showErrorToast: (msg: string) => void;
-  fetchData: () => Promise<void>;
+/* ------------------------------------------------------------------ */
+/* Constantes                                                         */
+/* ------------------------------------------------------------------ */
+const ROLE_PROF_KEY = "prof";
+const PAGE_SIZE = 20;
+
+/* ------------------------------------------------------------------ */
+/* Types                                                              */
+/* ------------------------------------------------------------------ */
+type TRole = { id: string | number; libelle: string };
+type TMatiere = { id: string; libelle: string };
+type TClasse = { id: string; libelle: string };
+
+/** Professeur (type canonique côté app) */
+type TProfessor = {
+  docId: string;
+  id?: number;
+  nom: string;
+  prenom: string;
+  email?: string;
+  login?: string;
+  /** Champ canonique: spécialité */
+  specialite?: string;
+  /** Rôle normalisé en string côté app */
+  role_id?: string;
+  role_libelle?: string;
+  role_key?: string;
+  telephone?: string;
+  adresse?: string;
+  classe_id?: string | null;
+  classe_libelle?: string | null;
+  /** Optionnel: description détaillée si tu la conserves */
+  specialite_detaillee?: string;
+};
+
+type TUserRow = {
+  id?: number;
+  docId: string;
+  nom: string;
+  prenom: string;
+  specialite?: string;
+  role_id?: string; // normalisé en string
+  role_libelle?: string;
+  role_key?: string;
+  classe_id?: string | null;
+  classe_libelle?: string | null;
+};
+
+/* ------------------------------------------------------------------ */
+/* Page: Professeurs                                                  */
+/* ------------------------------------------------------------------ */
+export default function ProfessorsPage() {
+  const [roles, setRoles] = useState<TRole[]>([]);
+  const [matieres, setMatieres] = useState<TMatiere[]>([]);
+  const [classes, setClasses] = useState<TClasse[]>([]);
+  const [list, setList] = useState<TUserRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastDoc, setLastDoc] =
+    useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+
+  // UI: toasts
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [showError, setShowError] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+
+  // UI: formulaire visible ?
+  const [showForm, setShowForm] = useState(false);
+
+  // Details modal
+  const [showDetails, setShowDetails] = useState(false);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsDocId, setDetailsDocId] = useState<string | null>(null);
+  const [details, setDetails] = useState<TProfessor | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+
+  const showSuccessToast = (msg: string) => {
+    setToastMessage(msg);
+    setShowSuccess(true);
+  };
+  const showErrorToast = (msg: string) => {
+    setToastMessage(msg);
+    setShowError(true);
+  };
+
+  const fetchRoles = async () => {
+    const snap = await getDocs(collection(db, "roles"));
+    const rs: TRole[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as any;
+      rs.push({ id: data.id ?? d.id, libelle: data.libelle });
+    });
+    setRoles(rs);
+  };
+
+  const fetchMatieres = async () => {
+    try {
+      const snap = await getDocs(collection(db, "matieres"));
+      const ms: TMatiere[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as any;
+        ms.push({ id: d.id, libelle: data.libelle });
+      });
+      setMatieres(ms);
+    } catch {
+      setMatieres([]);
+    }
+  };
+
+  const fetchClasses = async () => {
+    try {
+      const snap = await getDocs(collection(db, "classes"));
+      const cs: TClasse[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as any;
+        cs.push({ id: d.id, libelle: data.libelle ?? d.id });
+      });
+      setClasses(cs);
+    } catch {
+      setClasses([]);
+    }
+  };
+
+  /* ---------------------- Liste: chargement paginé ------------------ */
+  const loadFirstPage = async () => {
+    setLoading(true);
+    try {
+      // NOTE: Requêtes Firestore indexées:
+      // where("role_key", "==", "prof").orderBy("nom").limit(PAGE_SIZE)
+      // Si Firestore demande un index composite, crée-le via le lien d’erreur.
+      const qy = query(
+        collection(db, "users"),
+        where("role_key", "==", ROLE_PROF_KEY),
+        orderBy("nom"),
+        limit(PAGE_SIZE)
+      );
+      const snap = await getDocs(qy);
+
+      const rows: TUserRow[] = snap.docs.map((d) => {
+        const data = d.data() as DocumentData;
+        return {
+          docId: d.id,
+          id: data.id,
+          nom: data.nom || "",
+          prenom: data.prenom || "",
+          specialite: data.specialite || data.specialty || "",
+          role_id:
+            data.role_id !== undefined && data.role_id !== null
+              ? String(data.role_id)
+              : undefined,
+          role_libelle: data.role_libelle,
+          role_key: data.role_key,
+          classe_id: data.classe_id ?? null,
+          classe_libelle: data.classe_libelle ?? null,
+        };
+      });
+
+      setList(rows);
+      setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+      setHasMore(snap.size === PAGE_SIZE);
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Erreur lors du chargement des professeurs.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!lastDoc || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const qy = query(
+        collection(db, "users"),
+        where("role_key", "==", ROLE_PROF_KEY),
+        orderBy("nom"),
+        startAfter(lastDoc),
+        limit(PAGE_SIZE)
+      );
+      const snap = await getDocs(qy);
+
+      const rows: TUserRow[] = snap.docs.map((d) => {
+        const data = d.data() as DocumentData;
+        return {
+          docId: d.id,
+          id: data.id,
+          nom: data.nom || "",
+          prenom: data.prenom || "",
+          specialite: data.specialite || data.specialty || "",
+          role_id:
+            data.role_id !== undefined && data.role_id !== null
+              ? String(data.role_id)
+              : undefined,
+          role_libelle: data.role_libelle,
+          role_key: data.role_key,
+          classe_id: data.classe_id ?? null,
+          classe_libelle: data.classe_libelle ?? null,
+        };
+      });
+
+      setList((prev) => [...prev, ...rows]);
+      setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+      setHasMore(snap.size === PAGE_SIZE);
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Impossible de charger plus de professeurs.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const fetchAll = async () => {
+    await Promise.all([fetchRoles(), fetchMatieres(), fetchClasses()]);
+    await loadFirstPage();
+  };
+
+  useEffect(() => {
+    fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------------------- Détails: open / load ---------------------- */
+  const openDetails = async (docId: string) => {
+    setShowDetails(true);
+    setDetailsLoading(true);
+    setEditMode(false);
+    setSavingEdit(false);
+    setAssigning(false);
+    setDetailsDocId(docId);
+    try {
+      const ref = doc(db, "users", docId);
+      const d = await getDoc(ref);
+      if (!d.exists()) {
+        showErrorToast("Professeur introuvable.");
+        setShowDetails(false);
+        return;
+      }
+      const data = d.data() as DocumentData;
+      const prof: TProfessor = {
+        docId,
+        id: data.id,
+        nom: data.nom ?? "",
+        prenom: data.prenom ?? "",
+        email: data.email ?? "",
+        login: data.login ?? "",
+        // lecture rétrocompatible
+        specialite: data.specialite ?? data.specialty ?? "",
+        role_id:
+          data.role_id !== undefined && data.role_id !== null
+            ? String(data.role_id)
+            : undefined,
+        role_libelle: data.role_libelle,
+        role_key: data.role_key,
+        telephone: data.telephone ?? "",
+        adresse: data.adresse ?? "",
+        classe_id: data.classe_id ?? null,
+        classe_libelle: data.classe_libelle ?? null,
+        specialite_detaillee: data.specialite_detaillee ?? "",
+      };
+      setDetails(prof);
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Erreur lors du chargement des détails.");
+      setShowDetails(false);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
+  /* ---------------------- Détails: modifier ------------------------- */
+  const saveEdition = async () => {
+    if (!detailsDocId || !details) return;
+    setSavingEdit(true);
+    try {
+      const ref = doc(db, "users", detailsDocId);
+      // On persiste les champs clés (champ canonique: specialite)
+      const payload: Partial<TProfessor> & { specialty?: string } = {
+        nom: details.nom || "",
+        prenom: details.prenom || "",
+        email: details.email || "",
+        login: details.login || "",
+        specialite: details.specialite || "",
+        telephone: details.telephone || "",
+        adresse: details.adresse || "",
+        specialite_detaillee: details.specialite_detaillee || "",
+      };
+      // Compat descendante: dupliquer sur 'specialty' (à retirer quand migration OK)
+      payload.specialty = payload.specialite ?? "";
+
+      await updateDoc(ref, payload as any);
+      showSuccessToast("Modifications enregistrées.");
+      setEditMode(false);
+      await loadFirstPage(); // rafraîchit la liste paginée
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Impossible d’enregistrer les modifications.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  /* ---------------------- Détails: supprimer ------------------------ */
+  const deleteProfessor = async () => {
+    if (!detailsDocId) return;
+    if (!confirm("Confirmer la suppression de ce professeur ?")) return;
+    try {
+      await deleteDoc(doc(db, "users", detailsDocId));
+      showSuccessToast("Professeur supprimé.");
+      setShowDetails(false);
+      await loadFirstPage();
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Suppression impossible.");
+    }
+  };
+
+  /* ---------------------- Détails: affecter classe ------------------ */
+  const [selectedClasseId, setSelectedClasseId] = useState<string>("");
+  useEffect(() => {
+    if (showDetails && details) {
+      setSelectedClasseId(details.classe_id || "");
+    }
+  }, [showDetails, details]);
+
+  const assignClasse = async () => {
+    if (!detailsDocId) return;
+    setAssigning(true);
+    try {
+      const chosen = classes.find((c) => c.id === selectedClasseId);
+      await updateDoc(doc(db, "users", detailsDocId), {
+        classe_id: selectedClasseId || null,
+        classe_libelle: chosen?.libelle || null,
+      });
+      showSuccessToast("Affectation enregistrée.");
+      // refresh details
+      const d = await getDoc(doc(db, "users", detailsDocId));
+      const data = d.data() as DocumentData;
+      const prof: TProfessor = {
+        docId: detailsDocId,
+        id: data.id,
+        nom: data.nom ?? "",
+        prenom: data.prenom ?? "",
+        email: data.email ?? "",
+        login: data.login ?? "",
+        specialite: data.specialite ?? data.specialty ?? "",
+        role_id:
+          data.role_id !== undefined && data.role_id !== null
+            ? String(data.role_id)
+            : undefined,
+        role_libelle: data.role_libelle,
+        role_key: data.role_key,
+        telephone: data.telephone ?? "",
+        adresse: data.adresse ?? "",
+        classe_id: data.classe_id ?? null,
+        classe_libelle: data.classe_libelle ?? null,
+        specialite_detaillee: data.specialite_detaillee ?? "",
+      };
+      setDetails(prof);
+      await loadFirstPage();
+    } catch (e) {
+      console.error(e);
+      showErrorToast("Affectation impossible.");
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  return (
+    <div className="container-fluid py-3">
+      {/* Header */}
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <h3 className="mb-1">Professeurs</h3>
+          <div className="text-muted">
+            Ajoutez et gérez les professeurs de l’établissement.
+          </div>
+        </div>
+        <div className="d-flex gap-2">
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowForm((s) => !s)}
+          >
+            <i className="bi bi-plus-lg me-2" />
+            {showForm ? "Fermer le formulaire" : "Ajouter Professeur"}
+          </button>
+        </div>
+      </div>
+
+      {/* Formulaire complet (comme admin) */}
+      {showForm && (
+        <div className="card border-0 shadow-sm mb-4">
+          <div className="card-body">
+            <TeacherForm
+              roles={roles as any}
+              matieres={matieres}
+              showSuccessToast={showSuccessToast}
+              showErrorToast={showErrorToast}
+              fetchData={async () => {
+                await loadFirstPage();
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Liste */}
+      <div className="card border-0 shadow-sm">
+        <div className="card-header bg-white border-0">
+          <div className="d-flex justify-content-between align-items-center">
+            <h5 className="mb-0 fw-semibold">
+              <i className="bi bi-people me-2" />
+              Liste des professeurs
+            </h5>
+            <span className="badge bg-light text-dark">
+              {loading && list.length === 0
+                ? "Chargement…"
+                : `${list.length} résultat(s)`}
+            </span>
+          </div>
+        </div>
+        <div className="card-body p-0">
+          {loading && list.length === 0 ? (
+            <div className="text-center py-5">
+              <div className="spinner-border" role="status" />
+              <div className="text-muted mt-2">Chargement…</div>
+            </div>
+          ) : list.length === 0 ? (
+            <div className="text-center py-5 text-muted">
+              Aucun professeur pour le moment.
+            </div>
+          ) : (
+            <>
+              <div className="table-responsive">
+                <table className="table align-middle mb-0">
+                  <thead className="table-light">
+                    <tr>
+                      <th>Nom</th>
+                      <th>Prénom</th>
+                      <th>Spécialité</th>
+                      <th>Classe</th>
+                      <th style={{ width: 180 }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {list.map((u) => (
+                      <tr key={u.docId}>
+                        <td className="fw-semibold">{u.nom}</td>
+                        <td>{u.prenom}</td>
+                        <td>{u.specialite || "-"}</td>
+                        <td>{u.classe_libelle || "-"}</td>
+                        <td className="d-flex gap-2">
+                          <button
+                            className="btn btn-outline-secondary btn-sm"
+                            onClick={() => openDetails(u.docId)}
+                          >
+                            Voir plus
+                          </button>
+                          {/* hooks futurs: modifier/supprimer rapides si besoin */}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              <div className="p-3 d-flex justify-content-center">
+                {hasMore ? (
+                  <button
+                    className="btn btn-outline-primary"
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" />
+                        Chargement…
+                      </>
+                    ) : (
+                      "Charger plus"
+                    )}
+                  </button>
+                ) : (
+                  <span className="text-muted small">
+                    Fin de la liste des professeurs.
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Modal détails */}
+      {showDetails && (
+        <>
+          <div
+            className="modal fade show"
+            style={{ display: "block" }}
+            aria-modal="true"
+            role="dialog"
+          >
+            <div className="modal-dialog modal-lg modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">
+                    <i className="bi bi-person-vcard me-2" />
+                    Détails du professeur
+                  </h5>
+                  <button
+                    type="button"
+                    className="btn-close"
+                    onClick={() => setShowDetails(false)}
+                  />
+                </div>
+
+                <div className="modal-body">
+                  {detailsLoading ? (
+                    <div className="text-center py-4">
+                      <div className="spinner-border" role="status" />
+                      <div className="text-muted mt-2">Chargement…</div>
+                    </div>
+                  ) : details ? (
+                    <>
+                      {/* Infos principales */}
+                      <div className="row g-3">
+                        <div className="col-md-4">
+                          <label className="form-label">Prénom</label>
+                          <input
+                            className="form-control"
+                            value={details.prenom || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, prenom: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Nom</label>
+                          <input
+                            className="form-control"
+                            value={details.nom || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, nom: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Email</label>
+                          <input
+                            className="form-control"
+                            value={details.email || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, email: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Login</label>
+                          <input
+                            className="form-control"
+                            value={details.login || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, login: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Spécialité</label>
+                          <input
+                            className="form-control"
+                            value={details.specialite || ""}
+                            onChange={(e) =>
+                              setDetails({
+                                ...details,
+                                specialite: e.target.value,
+                              })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-4">
+                          <label className="form-label">Téléphone</label>
+                          <input
+                            className="form-control"
+                            value={details.telephone || ""}
+                            onChange={(e) =>
+                              setDetails({
+                                ...details,
+                                telephone: e.target.value,
+                              })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                        <div className="col-md-12">
+                          <label className="form-label">Adresse</label>
+                          <input
+                            className="form-control"
+                            value={details.adresse || ""}
+                            onChange={(e) =>
+                              setDetails({ ...details, adresse: e.target.value })
+                            }
+                            readOnly={!editMode}
+                          />
+                        </div>
+                      </div>
+
+                      <hr className="my-3" />
+
+                      {/* Affectation classe */}
+                      <div className="row g-2 align-items-end">
+                        <div className="col-md-8">
+                          <label className="form-label">
+                            Affecter à une classe
+                          </label>
+                          <select
+                            className="form-select"
+                            value={selectedClasseId}
+                            onChange={(e) => setSelectedClasseId(e.target.value)}
+                          >
+                            <option value="">— Aucune —</option>
+                            {classes.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.libelle}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="col-md-4 d-flex gap-2">
+                          <button
+                            className="btn btn-outline-primary w-100"
+                            onClick={assignClasse}
+                            disabled={assigning}
+                          >
+                            {assigning ? (
+                              <>
+                                <span className="spinner-border spinner-border-sm me-2" />
+                                Affectation…
+                              </>
+                            ) : (
+                              "Enregistrer l’affectation"
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-muted">Aucune donnée à afficher.</div>
+                  )}
+                </div>
+
+                <div className="modal-footer">
+                  <button
+                    className="btn btn-outline-secondary"
+                    onClick={() => setShowDetails(false)}
+                  >
+                    Fermer
+                  </button>
+                  {!editMode ? (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => setEditMode(true)}
+                    >
+                      Modifier
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-primary"
+                      onClick={saveEdition}
+                      disabled={savingEdit}
+                    >
+                      {savingEdit ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" />
+                          Enregistrement…
+                        </>
+                      ) : (
+                        "Enregistrer"
+                      )}
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-outline-danger"
+                    onClick={deleteProfessor}
+                  >
+                    Supprimer
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div
+            className="modal-backdrop fade show"
+            onClick={() => setShowDetails(false)}
+          />
+        </>
+      )}
+
+      {/* Toasts */}
+      <Toast
+        message={toastMessage}
+        type="success"
+        show={showSuccess}
+        onClose={() => setShowSuccess(false)}
+      />
+      <Toast
+        message={toastMessage}
+        type="error"
+        show={showError}
+        onClose={() => setShowError(false)}
+      />
+    </div>
+  );
 }
 
-export default function TeacherForm({
+/* ------------------------------------------------------------------ */
+/* Utils                                                              */
+/* ------------------------------------------------------------------ */
+function toRoleKey(label: string) {
+  return label
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // retire les accents
+    .replace(/[^a-z0-9]+/g, "-") // remplace espaces & co par "-"
+    .replace(/(^-|-$)/g, ""); // trim "-"
+}
+
+/* ------------------------------------------------------------------ */
+/* Formulaire complet (copie admin + select rôle)                     */
+/* ------------------------------------------------------------------ */
+function TeacherForm({
   roles,
   matieres,
   showSuccessToast,
   showErrorToast,
-  fetchData
-}: TeacherFormProps) {
+  fetchData,
+}: {
+  roles: { id: string | number; libelle: string }[];
+  matieres: { id: string; libelle: string }[];
+  showSuccessToast: (msg: string) => void;
+  showErrorToast: (msg: string) => void;
+  fetchData: () => Promise<void>;
+}) {
   const [teacherForm, setTeacherForm] = useState({
-    email: '',
-    login: '',
-    nom: '',
-    prenom: '',
-    password: '',
-    role_id: '',
-    first_login: '1',
-    specialty: '',
-    specialite: '',
-    date_naissance: '',
-    lieu_naissance: '',
-    nationalite: '',
-    sexe: '',
-    situation_matrimoniale: '',
-    cni_passeport: '',
-    adresse: '',
-    telephone: '',
-    statut: '',
-    fonction_principale: '',
-    disponibilite: '',
+    email: "",
+    login: "",
+    nom: "",
+    prenom: "",
+    password: "",
+    role_id: "",
+    first_login: "1",
+    /** Champ canonique */
+    specialite: "",
+    /** Détail optionnel */
+    specialite_detaillee: "",
+    date_naissance: "",
+    lieu_naissance: "",
+    nationalite: "",
+    sexe: "",
+    situation_matrimoniale: "",
+    cni_passeport: "",
+    adresse: "",
+    telephone: "",
+    statut: "",
+    fonction_principale: "",
+    disponibilite: "",
     matieres_enseignees: [] as string[],
     experience_enseignement: {
       annees: 0,
-      etablissements: ['']
+      etablissements: [""],
     },
-    diplomes: [{
-      intitule: '',
-      niveau: '',
-      annee: '',
-      etablissement: ''
-    }],
-    domaines_specialisation: [''],
-    formation_pedagogique: '',
-    niveaux_enseignement: [''],
-    langues_enseignement: [''],
-    experiences_professionnelles: [{
-      etablissements: [''],
-      duree: ''
-    }],
+    diplomes: [
+      {
+        intitule: "",
+        niveau: "",
+        annee: "",
+        etablissement: "",
+      },
+    ],
+    domaines_specialisation: [""],
+    formation_pedagogique: "",
+    niveaux_enseignement: [""],
+    langues_enseignement: [""],
+    experiences_professionnelles: [
+      {
+        etablissements: [""],
+        duree: "",
+      },
+    ],
     competences: {
-      outils: [''],
-      langues: [''],
-      publications: ['']
+      outils: [""],
+      langues: [""],
+      publications: [""],
     },
     documents: {
       cv: null as File | null,
       diplomes: null as File | null,
-      piece_identite: null as File | null
-    }
+      piece_identite: null as File | null,
+    },
   });
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: keyof typeof teacherForm.documents) => {
+  const uploadFile = async (file: File): Promise<string> => {
+    return `https://example.com/uploads/${file.name}`;
+  };
+
+  const handleFileChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    field: keyof typeof teacherForm.documents
+  ) => {
     if (e.target.files && e.target.files[0]) {
-      setTeacherForm({
-        ...teacherForm,
+      setTeacherForm((prev) => ({
+        ...prev,
         documents: {
-          ...teacherForm.documents,
-          [field]: e.target.files[0]
-        }
-      });
+          ...prev.documents,
+          [field]: e.target.files![0],
+        },
+      }));
+    }
+  };
+
+  const handleAddArrayItem = (field: string) => {
+    const value = (teacherForm as any)[field];
+    if (Array.isArray(value)) {
+      setTeacherForm((prev) => ({
+        ...prev,
+        [field]: [...value, ""],
+      }));
+    }
+  };
+  const handleRemoveArrayItem = (field: string, index: number) => {
+    const value = (teacherForm as any)[field];
+    if (Array.isArray(value)) {
+      const newArray = [...value];
+      newArray.splice(index, 1);
+      setTeacherForm((prev) => ({ ...prev, [field]: newArray }));
+    }
+  };
+  const handleArrayItemChange = (
+    field: string,
+    index: number,
+    value: string
+  ) => {
+    const fieldValue = (teacherForm as any)[field];
+    if (Array.isArray(fieldValue)) {
+      const newArray = [...fieldValue];
+      newArray[index] = value;
+      setTeacherForm((prev) => ({ ...prev, [field]: newArray }));
     }
   };
 
   const handleAddDiplome = () => {
-    setTeacherForm({
-      ...teacherForm,
+    setTeacherForm((prev) => ({
+      ...prev,
       diplomes: [
-        ...teacherForm.diplomes,
-        { intitule: '', niveau: '', annee: '', etablissement: '' }
-      ]
-    });
+        ...prev.diplomes,
+        { intitule: "", niveau: "", annee: "", etablissement: "" },
+      ],
+    }));
   };
-
   const handleRemoveDiplome = (index: number) => {
     const newDiplomes = [...teacherForm.diplomes];
     newDiplomes.splice(index, 1);
-    setTeacherForm({
-      ...teacherForm,
-      diplomes: newDiplomes
-    });
+    setTeacherForm((prev) => ({ ...prev, diplomes: newDiplomes }));
   };
-
   const handleDiplomeChange = (index: number, field: string, value: string) => {
     const newDiplomes = [...teacherForm.diplomes];
-    newDiplomes[index] = {
-      ...newDiplomes[index],
-      [field]: value
-    };
-    setTeacherForm({
-      ...teacherForm,
-      diplomes: newDiplomes
-    });
+    newDiplomes[index] = { ...newDiplomes[index], [field]: value };
+    setTeacherForm((prev) => ({ ...prev, diplomes: newDiplomes }));
   };
 
   const handleAddExperience = () => {
-    setTeacherForm({
-      ...teacherForm,
+    setTeacherForm((prev) => ({
+      ...prev,
       experiences_professionnelles: [
-        ...teacherForm.experiences_professionnelles,
-        { etablissements: [''], duree: '' }
-      ]
-    });
+        ...prev.experiences_professionnelles,
+        { etablissements: [""], duree: "" },
+      ],
+    }));
   };
-
   const handleRemoveExperience = (index: number) => {
-    const newExperiences = [...teacherForm.experiences_professionnelles];
-    newExperiences.splice(index, 1);
-    setTeacherForm({
-      ...teacherForm,
-      experiences_professionnelles: newExperiences
-    });
+    const arr = [...teacherForm.experiences_professionnelles];
+    arr.splice(index, 1);
+    setTeacherForm((prev) => ({ ...prev, experiences_professionnelles: arr }));
+  };
+  const handleExperienceChange = (
+    index: number,
+    field: string,
+    value: string | string[]
+  ) => {
+    const arr = [...teacherForm.experiences_professionnelles];
+    (arr[index] as any)[field] = value;
+    setTeacherForm((prev) => ({ ...prev, experiences_professionnelles: arr }));
   };
 
-  const handleExperienceChange = (index: number, field: string, value: string | string[]) => {
-    const newExperiences = [...teacherForm.experiences_professionnelles];
-    newExperiences[index] = {
-      ...newExperiences[index],
-      [field]: value
-    };
-    setTeacherForm({
-      ...teacherForm,
-      experiences_professionnelles: newExperiences
-    });
-  };
-
-  const handleAddArrayItem = (field: string) => {
-    const value = teacherForm[field as keyof typeof teacherForm];
-    if (Array.isArray(value)) {
-      setTeacherForm({
-        ...teacherForm,
-        [field]: [...value, '']
-      });
-    } else {
-      console.error(`${field} is not an array`);
-    }
-  };
-
-  const handleRemoveArrayItem = (field: string, index: number) => {
-    const value = teacherForm[field as keyof typeof teacherForm];
-    if (Array.isArray(value)) {
-      const newArray = [...value];
-      newArray.splice(index, 1);
-      setTeacherForm({
-        ...teacherForm,
-        [field]: newArray
-      });
-    } else {
-      console.error(`${field} is not an array`);
-    }
-  };
-
-  const handleArrayItemChange = (field: string, index: number, value: string) => {
-    const fieldValue = teacherForm[field as keyof typeof teacherForm];
-    if (Array.isArray(fieldValue)) {
-      const newArray = [...fieldValue];
-      newArray[index] = value;
-      setTeacherForm({
-        ...teacherForm,
-        [field]: newArray
-      });
-    } else {
-      console.error(`${field} is not an array`);
-    }
-  };
-
-  const handleCompetenceChange = (category: string, index: number, value: string) => {
+  const handleCompetenceChange = (
+    category: "outils" | "langues" | "publications",
+    index: number,
+    value: string
+  ) => {
     const newCompetences = { ...teacherForm.competences };
     (newCompetences as any)[category][index] = value;
-    setTeacherForm({
-      ...teacherForm,
-      competences: newCompetences
-    });
+    setTeacherForm((prev) => ({ ...prev, competences: newCompetences }));
   };
-
-  const handleAddCompetence = (category: string) => {
+  const handleAddCompetence = (
+    category: "outils" | "langues" | "publications"
+  ) => {
     const newCompetences = { ...teacherForm.competences };
-    (newCompetences as any)[category].push('');
-    setTeacherForm({
-      ...teacherForm,
-      competences: newCompetences
-    });
+    (newCompetences as any)[category].push("");
+    setTeacherForm((prev) => ({ ...prev, competences: newCompetences }));
   };
-
-  const handleRemoveCompetence = (category: string, index: number) => {
+  const handleRemoveCompetence = (
+    category: "outils" | "langues" | "publications",
+    index: number
+  ) => {
     const newCompetences = { ...teacherForm.competences };
     (newCompetences as any)[category].splice(index, 1);
-    setTeacherForm({
-      ...teacherForm,
-      competences: newCompetences
-    });
+    setTeacherForm((prev) => ({ ...prev, competences: newCompetences }));
   };
 
   const handleTeacherSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // Validation des champs obligatoires
-      if (!teacherForm.nom || !teacherForm.prenom || !teacherForm.email ||
-          !teacherForm.login || !teacherForm.password || !teacherForm.specialty) {
-        showErrorToast('Veuillez remplir tous les champs obligatoires');
+      // Champs requis
+      if (
+        !teacherForm.nom ||
+        !teacherForm.prenom ||
+        !teacherForm.email ||
+        !teacherForm.login ||
+        !teacherForm.password ||
+        !teacherForm.specialite
+      ) {
+        showErrorToast("Veuillez remplir tous les champs obligatoires");
         return;
       }
-
-      // ✅ Rôle sélectionné (obligatoire)
       if (!teacherForm.role_id) {
-        showErrorToast('Veuillez sélectionner un rôle');
-        return;
-      }
-      const roleObj = roles.find(r => String(r.id) === String(teacherForm.role_id));
-      if (!roleObj) {
-        showErrorToast('Rôle sélectionné introuvable');
+        showErrorToast("Veuillez sélectionner un rôle");
         return;
       }
 
-      // ✅ Si le rôle est "Professeur", on impose au moins une matière
-      if (roleObj.libelle === 'Professeur' && teacherForm.matieres_enseignees.length === 0) {
-        showErrorToast('Veuillez sélectionner au moins une matière');
+      const roleObj = roles.find(
+        (r) => String(r.id) === String(teacherForm.role_id)
+      );
+      if (!roleObj) {
+        showErrorToast("Rôle sélectionné introuvable");
+        return;
+      }
+
+      // Si rôle Professeur → au moins 1 matière
+      if (
+        roleObj.libelle === "Professeur" &&
+        teacherForm.matieres_enseignees.length === 0
+      ) {
+        showErrorToast("Veuillez sélectionner au moins une matière");
         return;
       }
 
       const fileUrls = {
-        cv: teacherForm.documents.cv ? await uploadFile(teacherForm.documents.cv) : null,
-        diplomes: teacherForm.documents.diplomes ? await uploadFile(teacherForm.documents.diplomes) : null,
-        piece_identite: teacherForm.documents.piece_identite ? await uploadFile(teacherForm.documents.piece_identite) : null
+        cv: teacherForm.documents.cv
+          ? await uploadFile(teacherForm.documents.cv)
+          : null,
+        diplomes: teacherForm.documents.diplomes
+          ? await uploadFile(teacherForm.documents.diplomes)
+          : null,
+        piece_identite: teacherForm.documents.piece_identite
+          ? await uploadFile(teacherForm.documents.piece_identite)
+          : null,
       };
 
       const usersSnapshot = await getDocs(collection(db, "users"));
       const newUserId = usersSnapshot.size + 1;
 
+      // role_key unique pour les requêtes (indexé)
+      const role_key =
+        roleObj.libelle === "Professeur"
+          ? ROLE_PROF_KEY
+          : toRoleKey(roleObj.libelle);
+
       await addDoc(collection(db, "users"), {
         ...teacherForm,
         id: newUserId,
-        role_id: roleObj.id,           // <= id choisi dans le select
-        role_libelle: roleObj.libelle, // <= utile pour les redirections
-        documents: fileUrls
+        // Normalisation: stocker role_id en string
+        role_id: String(roleObj.id),
+        role_libelle: roleObj.libelle,
+        role_key,
+        // Compat descendante: dupliquer sur 'specialty'
+        specialty: teacherForm.specialite,
+        documents: fileUrls,
       });
 
-      showSuccessToast('Utilisateur ajouté avec succès !');
-
-      // Reset form
+      showSuccessToast("Professeur ajouté avec succès !");
+      // reset
       setTeacherForm({
-        email: '',
-        login: '',
-        nom: '',
-        prenom: '',
-        password: '',
-        role_id: '',
-        first_login: '1',
-        specialty: '',
-        specialite: '',
-        date_naissance: '',
-        lieu_naissance: '',
-        nationalite: '',
-        sexe: '',
-        situation_matrimoniale: '',
-        cni_passeport: '',
-        adresse: '',
-        telephone: '',
-        statut: '',
-        fonction_principale: '',
-        disponibilite: '',
+        email: "",
+        login: "",
+        nom: "",
+        prenom: "",
+        password: "",
+        role_id: "",
+        first_login: "1",
+        specialite: "",
+        specialite_detaillee: "",
+        date_naissance: "",
+        lieu_naissance: "",
+        nationalite: "",
+        sexe: "",
+        situation_matrimoniale: "",
+        cni_passeport: "",
+        adresse: "",
+        telephone: "",
+        statut: "",
+        fonction_principale: "",
+        disponibilite: "",
         matieres_enseignees: [],
-        experience_enseignement: {
-          annees: 0,
-          etablissements: ['']
-        },
-        diplomes: [{
-          intitule: '',
-          niveau: '',
-          annee: '',
-          etablissement: ''
-        }],
-        domaines_specialisation: [''],
-        formation_pedagogique: '',
-        niveaux_enseignement: [''],
-        langues_enseignement: [''],
-        experiences_professionnelles: [{
-          etablissements: [''],
-          duree: ''
-        }],
-        competences: {
-          outils: [''],
-          langues: [''],
-          publications: ['']
-        },
-        documents: {
-          cv: null,
-          diplomes: null,
-          piece_identite: null
-        }
+        experience_enseignement: { annees: 0, etablissements: [""] },
+        diplomes: [
+          { intitule: "", niveau: "", annee: "", etablissement: "" },
+        ],
+        domaines_specialisation: [""],
+        formation_pedagogique: "",
+        niveaux_enseignement: [""],
+        langues_enseignement: [""],
+        experiences_professionnelles: [{ etablissements: [""], duree: "" }],
+        competences: { outils: [""], langues: [""], publications: [""] },
+        documents: { cv: null, diplomes: null, piece_identite: null },
       });
 
       await fetchData();
     } catch (error) {
-      console.error('Erreur lors de l\'ajout du professeur:', error);
-      showErrorToast('Erreur lors de l\'ajout du professeur');
+      console.error("Erreur lors de l'ajout du professeur:", error);
+      showErrorToast("Erreur lors de l'ajout du professeur");
     }
-  };
-
-  const uploadFile = async (file: File): Promise<string> => {
-    // TODO: brancher vers Firebase Storage si besoin
-    return `https://example.com/uploads/${file.name}`;
   };
 
   return (
@@ -332,12 +1070,14 @@ export default function TeacherForm({
           <select
             className="form-select"
             value={teacherForm.role_id}
-            onChange={(e) => setTeacherForm({ ...teacherForm, role_id: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, role_id: e.target.value })
+            }
             required
           >
             <option value="">Sélectionner un rôle</option>
             {roles.map((r) => (
-              <option key={r.id} value={r.id}>
+              <option key={String(r.id)} value={String(r.id)}>
                 {r.libelle}
               </option>
             ))}
@@ -355,7 +1095,9 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.prenom}
-            onChange={(e) => setTeacherForm({ ...teacherForm, prenom: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, prenom: e.target.value })
+            }
             required
             placeholder="Entrez le prénom"
           />
@@ -366,7 +1108,9 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.nom}
-            onChange={(e) => setTeacherForm({ ...teacherForm, nom: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, nom: e.target.value })
+            }
             required
             placeholder="Entrez le nom"
           />
@@ -377,18 +1121,22 @@ export default function TeacherForm({
             type="email"
             className="form-control"
             value={teacherForm.email}
-            onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, email: e.target.value })
+            }
             required
             placeholder="exemple@email.com"
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Nom d utilisateur*</label>
+          <label className="form-label">Nom d’utilisateur*</label>
           <input
             type="text"
             className="form-control"
             value={teacherForm.login}
-            onChange={(e) => setTeacherForm({ ...teacherForm, login: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, login: e.target.value })
+            }
             required
             placeholder="Nom d'utilisateur unique"
           />
@@ -399,7 +1147,9 @@ export default function TeacherForm({
             type="password"
             className="form-control"
             value={teacherForm.password}
-            onChange={(e) => setTeacherForm({ ...teacherForm, password: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, password: e.target.value })
+            }
             required
             placeholder="Mot de passe sécurisé"
             minLength={6}
@@ -410,20 +1160,27 @@ export default function TeacherForm({
           <input
             type="text"
             className="form-control"
-            value={teacherForm.specialty}
-            onChange={(e) => setTeacherForm({ ...teacherForm, specialty: e.target.value })}
+            value={teacherForm.specialite}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, specialite: e.target.value })
+            }
             required
             placeholder="Spécialité du professeur"
           />
         </div>
         <div className="col-md-12">
-          <label className="form-label">Spécialité détaillée</label>
+          <label className="form-label">Spécialité détaillée (optionnel)</label>
           <input
             type="text"
             className="form-control"
-            value={teacherForm.specialite}
-            onChange={(e) => setTeacherForm({ ...teacherForm, specialite: e.target.value })}
-            placeholder="Description détaillée de la spécialité (ex: Développeuse FullStack)"
+            value={teacherForm.specialite_detaillee}
+            onChange={(e) =>
+              setTeacherForm({
+                ...teacherForm,
+                specialite_detaillee: e.target.value,
+              })
+            }
+            placeholder="Ex: Développeur/Developpeuse FullStack"
           />
         </div>
 
@@ -438,7 +1195,9 @@ export default function TeacherForm({
             type="date"
             className="form-control"
             value={teacherForm.date_naissance}
-            onChange={(e) => setTeacherForm({ ...teacherForm, date_naissance: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, date_naissance: e.target.value })
+            }
           />
         </div>
         <div className="col-md-4">
@@ -447,7 +1206,9 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.lieu_naissance}
-            onChange={(e) => setTeacherForm({ ...teacherForm, lieu_naissance: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, lieu_naissance: e.target.value })
+            }
             placeholder="Lieu de naissance"
           />
         </div>
@@ -457,7 +1218,9 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.nationalite}
-            onChange={(e) => setTeacherForm({ ...teacherForm, nationalite: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, nationalite: e.target.value })
+            }
             placeholder="Nationalité"
           />
         </div>
@@ -466,7 +1229,9 @@ export default function TeacherForm({
           <select
             className="form-select"
             value={teacherForm.sexe}
-            onChange={(e) => setTeacherForm({ ...teacherForm, sexe: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, sexe: e.target.value })
+            }
           >
             <option value="">Sélectionner</option>
             <option value="Masculin">Masculin</option>
@@ -478,7 +1243,12 @@ export default function TeacherForm({
           <select
             className="form-select"
             value={teacherForm.situation_matrimoniale}
-            onChange={(e) => setTeacherForm({ ...teacherForm, situation_matrimoniale: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({
+                ...teacherForm,
+                situation_matrimoniale: e.target.value,
+              })
+            }
           >
             <option value="">Sélectionner</option>
             <option value="Célibataire">Célibataire</option>
@@ -493,12 +1263,14 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.cni_passeport}
-            onChange={(e) => setTeacherForm({ ...teacherForm, cni_passeport: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, cni_passeport: e.target.value })
+            }
             placeholder="Numéro CNI/Passeport"
           />
         </div>
 
-        {/* Informations de contact */}
+        {/* Contact */}
         <div className="col-12 mt-3">
           <h5 className="fw-bold">Informations de contact</h5>
           <hr />
@@ -509,7 +1281,9 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.adresse}
-            onChange={(e) => setTeacherForm({ ...teacherForm, adresse: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, adresse: e.target.value })
+            }
             placeholder="Adresse complète"
           />
         </div>
@@ -519,7 +1293,9 @@ export default function TeacherForm({
             type="tel"
             className="form-control"
             value={teacherForm.telephone}
-            onChange={(e) => setTeacherForm({ ...teacherForm, telephone: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, telephone: e.target.value })
+            }
             placeholder="Numéro de téléphone"
           />
         </div>
@@ -534,7 +1310,9 @@ export default function TeacherForm({
           <select
             className="form-select"
             value={teacherForm.statut}
-            onChange={(e) => setTeacherForm({ ...teacherForm, statut: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, statut: e.target.value })
+            }
           >
             <option value="">Sélectionner</option>
             <option value="Vacataire">Vacataire</option>
@@ -549,7 +1327,12 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.fonction_principale}
-            onChange={(e) => setTeacherForm({ ...teacherForm, fonction_principale: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({
+                ...teacherForm,
+                fonction_principale: e.target.value,
+              })
+            }
             placeholder="Fonction principale"
           />
         </div>
@@ -559,12 +1342,14 @@ export default function TeacherForm({
             type="text"
             className="form-control"
             value={teacherForm.disponibilite}
-            onChange={(e) => setTeacherForm({ ...teacherForm, disponibilite: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({ ...teacherForm, disponibilite: e.target.value })
+            }
             placeholder="Ex: Lundi-Vendredi, 8h-16h"
           />
         </div>
 
-        {/* Matières enseignées (imposées si rôle Professeur) */}
+        {/* Matières */}
         <div className="col-12 mt-3">
           <h6 className="fw-bold">Matières enseignées*</h6>
         </div>
@@ -577,99 +1362,117 @@ export default function TeacherForm({
               const options = e.target.options;
               const selectedValues: string[] = [];
               for (let i = 0; i < options.length; i++) {
-                if (options[i].selected) {
-                  selectedValues.push(options[i].value);
-                }
+                if (options[i].selected) selectedValues.push(options[i].value);
               }
-              setTeacherForm({ ...teacherForm, matieres_enseignees: selectedValues });
+              setTeacherForm({
+                ...teacherForm,
+                matieres_enseignees: selectedValues,
+              });
             }}
-            required={roles.find(r => String(r.id) === String(teacherForm.role_id))?.libelle === 'Professeur'}
+            required={true}
           >
-            {matieres.map(matiere => (
-              <option key={matiere.id} value={matiere.id}>
-                {matiere.libelle}
+            {matieres.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.libelle}
               </option>
             ))}
           </select>
-          <small className="text-muted">Maintenez Ctrl (Windows) ou Cmd (Mac) pour sélectionner plusieurs matières</small>
+          <small className="text-muted">
+            Maintenez Ctrl (Windows) ou Cmd (Mac) pour sélectionner plusieurs
+            matières
+          </small>
         </div>
 
         {/* Expérience d'enseignement */}
         <div className="col-12 mt-3">
-          <h5 className="fw-bold">Expérience d enseignement</h5>
+          <h5 className="fw-bold">Expérience d’enseignement</h5>
           <hr />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Années d expérience</label>
+          <label className="form-label">Années d’expérience</label>
           <input
             type="number"
             className="form-control"
             value={teacherForm.experience_enseignement.annees}
-            onChange={(e) => setTeacherForm({
-              ...teacherForm,
-              experience_enseignement: {
-                ...teacherForm.experience_enseignement,
-                annees: parseInt(e.target.value) || 0
-              }
-            })}
+            onChange={(e) =>
+              setTeacherForm({
+                ...teacherForm,
+                experience_enseignement: {
+                  ...teacherForm.experience_enseignement,
+                  annees: parseInt(e.target.value) || 0,
+                },
+              })
+            }
             min={0}
             placeholder="Nombre d'années"
           />
         </div>
         <div className="col-12">
           <label className="form-label">Établissements précédents</label>
-          {teacherForm.experience_enseignement.etablissements.map((etablissement, index) => (
-            <div key={index} className="mb-2 d-flex">
-              <input
-                type="text"
-                className="form-control"
-                value={etablissement}
-                onChange={(e) => {
-                  const newEtablissements = [...teacherForm.experience_enseignement.etablissements];
-                  newEtablissements[index] = e.target.value;
-                  setTeacherForm({
-                    ...teacherForm,
-                    experience_enseignement: {
-                      ...teacherForm.experience_enseignement,
-                      etablissements: newEtablissements
-                    }
-                  });
-                }}
-                placeholder="Nom de l'établissement"
-              />
-              {teacherForm.experience_enseignement.etablissements.length > 1 && (
-                <button
-                  type="button"
-                  className="btn btn-outline-danger ms-2"
-                  onClick={() => {
-                    const newEtablissements = [...teacherForm.experience_enseignement.etablissements];
-                    newEtablissements.splice(index, 1);
+          {teacherForm.experience_enseignement.etablissements.map(
+            (etab, index) => (
+              <div key={index} className="mb-2 d-flex">
+                <input
+                  type="text"
+                  className="form-control"
+                  value={etab}
+                  onChange={(e) => {
+                    const arr = [
+                      ...teacherForm.experience_enseignement.etablissements,
+                    ];
+                    arr[index] = e.target.value;
                     setTeacherForm({
                       ...teacherForm,
                       experience_enseignement: {
                         ...teacherForm.experience_enseignement,
-                        etablissements: newEtablissements
-                      }
+                        etablissements: arr,
+                      },
                     });
                   }}
-                >
-                  <i className="bi bi-trash"></i>
-                </button>
-              )}
-            </div>
-          ))}
+                  placeholder="Nom de l'établissement"
+                />
+                {teacherForm.experience_enseignement.etablissements.length >
+                  1 && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-danger ms-2"
+                    onClick={() => {
+                      const arr = [
+                        ...teacherForm.experience_enseignement.etablissements,
+                      ];
+                      arr.splice(index, 1);
+                      setTeacherForm({
+                        ...teacherForm,
+                        experience_enseignement: {
+                          ...teacherForm.experience_enseignement,
+                          etablissements: arr,
+                        },
+                      });
+                    }}
+                  >
+                    <i className="bi bi-trash" />
+                  </button>
+                )}
+              </div>
+            )
+          )}
           <button
             type="button"
             className="btn btn-outline-primary btn-sm"
-            onClick={() => setTeacherForm({
-              ...teacherForm,
-              experience_enseignement: {
-                ...teacherForm.experience_enseignement,
-                etablissements: [...teacherForm.experience_enseignement.etablissements, '']
-              }
-            })}
+            onClick={() =>
+              setTeacherForm({
+                ...teacherForm,
+                experience_enseignement: {
+                  ...teacherForm.experience_enseignement,
+                  etablissements: [
+                    ...teacherForm.experience_enseignement.etablissements,
+                    "",
+                  ],
+                },
+              })
+            }
           >
-            <i className="bi bi-plus me-1"></i>
+            <i className="bi bi-plus me-1" />
             Ajouter établissement
           </button>
         </div>
@@ -687,7 +1490,9 @@ export default function TeacherForm({
                 type="text"
                 className="form-control"
                 value={diplome.intitule}
-                onChange={(e) => handleDiplomeChange(index, 'intitule', e.target.value)}
+                onChange={(e) =>
+                  handleDiplomeChange(index, "intitule", e.target.value)
+                }
                 placeholder="Ex: Master en Informatique"
               />
             </div>
@@ -696,7 +1501,9 @@ export default function TeacherForm({
               <select
                 className="form-select"
                 value={diplome.niveau}
-                onChange={(e) => handleDiplomeChange(index, 'niveau', e.target.value)}
+                onChange={(e) =>
+                  handleDiplomeChange(index, "niveau", e.target.value)
+                }
               >
                 <option value="">Sélectionner</option>
                 <option value="Bac">Bac</option>
@@ -712,7 +1519,9 @@ export default function TeacherForm({
                 type="text"
                 className="form-control"
                 value={diplome.annee}
-                onChange={(e) => handleDiplomeChange(index, 'annee', e.target.value)}
+                onChange={(e) =>
+                  handleDiplomeChange(index, "annee", e.target.value)
+                }
                 placeholder="2023"
               />
             </div>
@@ -722,7 +1531,9 @@ export default function TeacherForm({
                 type="text"
                 className="form-control"
                 value={diplome.etablissement}
-                onChange={(e) => handleDiplomeChange(index, 'etablissement', e.target.value)}
+                onChange={(e) =>
+                  handleDiplomeChange(index, "etablissement", e.target.value)
+                }
                 placeholder="Nom de l'établissement"
               />
             </div>
@@ -733,7 +1544,7 @@ export default function TeacherForm({
                   className="btn btn-outline-danger"
                   onClick={() => handleRemoveDiplome(index)}
                 >
-                  <i className="bi bi-trash"></i>
+                  <i className="bi bi-trash" />
                 </button>
               )}
             </div>
@@ -745,7 +1556,7 @@ export default function TeacherForm({
             className="btn btn-outline-primary btn-sm"
             onClick={handleAddDiplome}
           >
-            <i className="bi bi-plus me-1"></i>
+            <i className="bi bi-plus me-1" />
             Ajouter diplôme
           </button>
         </div>
@@ -759,16 +1570,24 @@ export default function TeacherForm({
                 type="text"
                 className="form-control"
                 value={domaine}
-                onChange={(e) => handleArrayItemChange('domaines_specialisation', index, e.target.value)}
+                onChange={(e) =>
+                  handleArrayItemChange(
+                    "domaines_specialisation",
+                    index,
+                    e.target.value
+                  )
+                }
                 placeholder="Domaine de spécialisation"
               />
               {teacherForm.domaines_specialisation.length > 1 && (
                 <button
                   type="button"
                   className="btn btn-outline-danger ms-2"
-                  onClick={() => handleRemoveArrayItem('domaines_specialisation', index)}
+                  onClick={() =>
+                    handleRemoveArrayItem("domaines_specialisation", index)
+                  }
                 >
-                  <i className="bi bi-trash"></i>
+                  <i className="bi bi-trash" />
                 </button>
               )}
             </div>
@@ -776,9 +1595,9 @@ export default function TeacherForm({
           <button
             type="button"
             className="btn btn-outline-primary btn-sm"
-            onClick={() => handleAddArrayItem('domaines_specialisation')}
+            onClick={() => handleAddArrayItem("domaines_specialisation")}
           >
-            <i className="bi bi-plus me-1"></i>
+            <i className="bi bi-plus me-1" />
             Ajouter domaine
           </button>
         </div>
@@ -789,7 +1608,12 @@ export default function TeacherForm({
           <textarea
             className="form-control"
             value={teacherForm.formation_pedagogique}
-            onChange={(e) => setTeacherForm({ ...teacherForm, formation_pedagogique: e.target.value })}
+            onChange={(e) =>
+              setTeacherForm({
+                ...teacherForm,
+                formation_pedagogique: e.target.value,
+              })
+            }
             placeholder="Décrivez vos formations pédagogiques..."
             rows={3}
           />
@@ -797,28 +1621,38 @@ export default function TeacherForm({
 
         {/* Niveaux d'enseignement */}
         <div className="col-12 mt-3">
-          <h6 className="fw-bold">Niveaux d enseignement</h6>
+          <h6 className="fw-bold">Niveaux d’enseignement</h6>
           {teacherForm.niveaux_enseignement.map((niveau, index) => (
             <div key={index} className="mb-2 d-flex">
               <select
                 className="form-select"
                 value={niveau}
-                onChange={(e) => handleArrayItemChange('niveaux_enseignement', index, e.target.value)}
+                onChange={(e) =>
+                  handleArrayItemChange(
+                    "niveaux_enseignement",
+                    index,
+                    e.target.value
+                  )
+                }
               >
                 <option value="">Sélectionner un niveau</option>
                 <option value="Primaire">Primaire</option>
                 <option value="Secondaire">Secondaire</option>
                 <option value="Lycée">Lycée</option>
                 <option value="Université">Université</option>
-                <option value="Formation professionnelle">Formation professionnelle</option>
+                <option value="Formation professionnelle">
+                  Formation professionnelle
+                </option>
               </select>
               {teacherForm.niveaux_enseignement.length > 1 && (
                 <button
                   type="button"
                   className="btn btn-outline-danger ms-2"
-                  onClick={() => handleRemoveArrayItem('niveaux_enseignement', index)}
+                  onClick={() =>
+                    handleRemoveArrayItem("niveaux_enseignement", index)
+                  }
                 >
-                  <i className="bi bi-trash"></i>
+                  <i className="bi bi-trash" />
                 </button>
               )}
             </div>
@@ -826,32 +1660,40 @@ export default function TeacherForm({
           <button
             type="button"
             className="btn btn-outline-primary btn-sm"
-            onClick={() => handleAddArrayItem('niveaux_enseignement')}
+            onClick={() => handleAddArrayItem("niveaux_enseignement")}
           >
-            <i className="bi bi-plus me-1"></i>
+            <i className="bi bi-plus me-1" />
             Ajouter niveau
           </button>
         </div>
 
-        {/* Langues d'enseignement */}
+        {/* Langues d’enseignement */}
         <div className="col-12 mt-3">
-          <h6 className="fw-bold">Langues d enseignement</h6>
+          <h6 className="fw-bold">Langues d’enseignement</h6>
           {teacherForm.langues_enseignement.map((langue, index) => (
             <div key={index} className="mb-2 d-flex">
               <input
                 type="text"
                 className="form-control"
                 value={langue}
-                onChange={(e) => handleArrayItemChange('langues_enseignement', index, e.target.value)}
+                onChange={(e) =>
+                  handleArrayItemChange(
+                    "langues_enseignement",
+                    index,
+                    e.target.value
+                  )
+                }
                 placeholder="Langue d'enseignement"
               />
               {teacherForm.langues_enseignement.length > 1 && (
                 <button
                   type="button"
                   className="btn btn-outline-danger ms-2"
-                  onClick={() => handleRemoveArrayItem('langues_enseignement', index)}
+                  onClick={() =>
+                    handleRemoveArrayItem("langues_enseignement", index)
+                  }
                 >
-                  <i className="bi bi-trash"></i>
+                  <i className="bi bi-trash" />
                 </button>
               )}
             </div>
@@ -859,9 +1701,9 @@ export default function TeacherForm({
           <button
             type="button"
             className="btn btn-outline-primary btn-sm"
-            onClick={() => handleAddArrayItem('langues_enseignement')}
+            onClick={() => handleAddArrayItem("langues_enseignement")}
           >
-            <i className="bi bi-plus me-1"></i>
+            <i className="bi bi-plus me-1" />
             Ajouter langue
           </button>
         </div>
@@ -883,9 +1725,9 @@ export default function TeacherForm({
                       className="form-control"
                       value={etablissement}
                       onChange={(e) => {
-                        const newEtablissements = [...experience.etablissements];
-                        newEtablissements[etabIndex] = e.target.value;
-                        handleExperienceChange(index, 'etablissements', newEtablissements);
+                        const arr = [...experience.etablissements];
+                        arr[etabIndex] = e.target.value;
+                        handleExperienceChange(index, "etablissements", arr);
                       }}
                       placeholder="Nom de l'établissement"
                     />
@@ -894,12 +1736,12 @@ export default function TeacherForm({
                         type="button"
                         className="btn btn-outline-danger ms-2"
                         onClick={() => {
-                          const newEtablissements = [...experience.etablissements];
-                          newEtablissements.splice(etabIndex, 1);
-                          handleExperienceChange(index, 'etablissements', newEtablissements);
+                          const arr = [...experience.etablissements];
+                          arr.splice(etabIndex, 1);
+                          handleExperienceChange(index, "etablissements", arr);
                         }}
                       >
-                        <i className="bi bi-trash"></i>
+                        <i className="bi bi-trash" />
                       </button>
                     )}
                   </div>
@@ -908,11 +1750,11 @@ export default function TeacherForm({
                   type="button"
                   className="btn btn-outline-secondary btn-sm"
                   onClick={() => {
-                    const newEtablissements = [...experience.etablissements, ''];
-                    handleExperienceChange(index, 'etablissements', newEtablissements);
+                    const arr = [...experience.etablissements, ""];
+                    handleExperienceChange(index, "etablissements", arr);
                   }}
                 >
-                  <i className="bi bi-plus me-1"></i>
+                  <i className="bi bi-plus me-1" />
                   Ajouter établissement
                 </button>
               </div>
@@ -922,7 +1764,9 @@ export default function TeacherForm({
                   type="text"
                   className="form-control"
                   value={experience.duree}
-                  onChange={(e) => handleExperienceChange(index, 'duree', e.target.value)}
+                  onChange={(e) =>
+                    handleExperienceChange(index, "duree", e.target.value)
+                  }
                   placeholder="Ex: 2 ans, 6 mois..."
                 />
               </div>
@@ -933,7 +1777,7 @@ export default function TeacherForm({
                     className="btn btn-outline-danger"
                     onClick={() => handleRemoveExperience(index)}
                   >
-                    <i className="bi bi-trash"></i>
+                    <i className="bi bi-trash" />
                   </button>
                 )}
               </div>
@@ -946,84 +1790,12 @@ export default function TeacherForm({
             className="btn btn-outline-primary btn-sm"
             onClick={handleAddExperience}
           >
-            <i className="bi bi-plus me-1"></i>
+            <i className="bi bi-plus me-1" />
             Ajouter expérience
           </button>
         </div>
 
-        {/* Compétences */}
-        <div className="col-12 mt-3">
-          <h5 className="fw-bold">Compétences</h5>
-          <hr />
-        </div>
-
-        {/* Outils */}
-        <div className="col-md-4">
-          <h6 className="fw-bold">Outils maîtrisés</h6>
-          {teacherForm.competences.outils.map((outil, index) => (
-            <div key={index} className="mb-2 d-flex">
-              <input
-                type="text"
-                className="form-control"
-                value={outil}
-                onChange={(e) => handleCompetenceChange('outils', index, e.target.value)}
-                placeholder="Nom de l'outil"
-              />
-              {teacherForm.competences.outils.length > 1 && (
-                <button
-                  type="button"
-                  className="btn btn-outline-danger ms-2"
-                  onClick={() => handleRemoveCompetence('outils', index)}
-                >
-                  <i className="bi bi-trash"></i>
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            type="button"
-            className="btn btn-outline-primary btn-sm"
-            onClick={() => handleAddCompetence('outils')}
-          >
-            <i className="bi bi-plus me-1"></i>
-            Ajouter outil
-          </button>
-        </div>
-
-        {/* Langues */}
-        <div className="col-md-4">
-          <h6 className="fw-bold">Langues parlées</h6>
-          {teacherForm.competences.langues.map((langue, index) => (
-            <div key={index} className="mb-2 d-flex">
-              <input
-                type="text"
-                className="form-control"
-                value={langue}
-                onChange={(e) => handleCompetenceChange('langues', index, e.target.value)}
-                placeholder="Langue + niveau"
-              />
-              {teacherForm.competences.langues.length > 1 && (
-                <button
-                  type="button"
-                  className="btn btn-outline-danger ms-2"
-                  onClick={() => handleRemoveCompetence('langues', index)}
-                >
-                  <i className="bi bi-trash"></i>
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            type="button"
-            className="btn btn-outline-primary btn-sm"
-            onClick={() => handleAddCompetence('langues')}
-          >
-            <i className="bi bi-plus me-1"></i>
-            Ajouter langue
-          </button>
-        </div>
-
-        {/* Documents à fournir */}
+        {/* Documents */}
         <div className="col-12 mt-3">
           <h5 className="fw-bold">Documents à fournir</h5>
           <hr />
@@ -1033,7 +1805,7 @@ export default function TeacherForm({
           <input
             type="file"
             className="form-control"
-            onChange={(e) => handleFileChange(e, 'cv')}
+            onChange={(e) => handleFileChange(e, "cv")}
             accept=".pdf"
           />
         </div>
@@ -1042,23 +1814,23 @@ export default function TeacherForm({
           <input
             type="file"
             className="form-control"
-            onChange={(e) => handleFileChange(e, 'diplomes')}
+            onChange={(e) => handleFileChange(e, "diplomes")}
             accept=".pdf"
           />
         </div>
         <div className="col-md-4">
-          <label className="form-label">Pièce d identité (PDF ou image)</label>
+          <label className="form-label">Pièce d’identité (PDF ou image)</label>
           <input
             type="file"
             className="form-control"
-            onChange={(e) => handleFileChange(e, 'piece_identite')}
+            onChange={(e) => handleFileChange(e, "piece_identite")}
             accept=".pdf,.jpg,.jpeg,.png"
           />
         </div>
 
         <div className="col-12 mt-4">
           <button type="submit" className="btn btn-primary px-4">
-            <i className="bi bi-plus-lg me-2"></i>
+            <i className="bi bi-plus-lg me-2" />
             Ajouter le professeur
           </button>
         </div>

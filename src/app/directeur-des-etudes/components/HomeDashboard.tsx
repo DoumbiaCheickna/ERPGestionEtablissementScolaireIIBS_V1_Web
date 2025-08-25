@@ -42,6 +42,67 @@ export default function HomeDashboard() {
 
   const selectedLabel = selected?.label || '';
 
+  /* ------------------------------------------------------------------ */
+  /* Statistiques fictives (visuelles) — ne modifie aucune donnée       */
+  /* ------------------------------------------------------------------ */
+  const stats = React.useMemo(() => {
+    // petit générateur pseudo-aléatoire déterministe basé sur l'année
+    const key = selectedLabel || '2024-2025';
+    let seed = 0;
+    for (const ch of key) seed += ch.charCodeAt(0);
+    const rnd = (min: number, max: number) => {
+      seed = (seed * 9301 + 49297) % 233280;
+      const r = seed / 233280;
+      return Math.floor(min + r * (max - min + 1));
+    };
+
+    const etudiants = rnd(320, 620);
+    const profs = rnd(18, 45);
+    const filieres = rnd(4, 9);
+    const classes = rnd(8, 22);
+    const tauxReussite = rnd(68, 96);
+    const tauxAssiduite = rnd(75, 98);
+
+    // répartition niveaux (%) qui somme ~100
+    const partsRaw = [rnd(10, 30), rnd(10, 30), rnd(10, 25), rnd(10, 25), rnd(5, 20)];
+    const sum = partsRaw.reduce((a, b) => a + b, 0);
+    const parts = partsRaw.map((p, i) =>
+      i < partsRaw.length - 1 ? Math.round((p / sum) * 100) : 100 - partsRaw.slice(0, -1).reduce((a, b) => a + Math.round((b / sum) * 100), 0)
+    );
+    const niveaux = [
+      { k: 'L1', v: parts[0] },
+      { k: 'L2', v: parts[1] },
+      { k: 'L3', v: parts[2] },
+      { k: 'M1', v: parts[3] },
+      { k: 'M2', v: parts[4] },
+    ];
+
+    const addDays = (d: Date, n: number) => {
+      const t = new Date(d);
+      t.setDate(t.getDate() + n);
+      return t;
+    };
+    const fmt = (d: Date) =>
+      d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+
+    const now = new Date();
+    const examens = [
+      { lib: 'Algorithme & Structures', date: addDays(now, 7) },
+      { lib: 'Bases de données', date: addDays(now, 14) },
+      { lib: 'Réseaux & Systèmes', date: addDays(now, 21) },
+    ].map(e => ({ ...e, dateTxt: fmt(e.date) }));
+
+    const attendus = rnd(18, 28);
+    const signes = Math.min(attendus, Math.max(0, attendus - rnd(0, 5)));
+    const emargements = { attendus, signes, pct: Math.round((signes / attendus) * 100) };
+
+    return {
+      etudiants, profs, filieres, classes,
+      tauxReussite, tauxAssiduite,
+      niveaux, examens, emargements,
+    };
+  }, [selectedLabel]);
+
   return (
     <div className="container-fluid px-0 mt-4">
       {/* En-tête */}
@@ -97,7 +158,7 @@ export default function HomeDashboard() {
       </div>
 
       {/* Carte info simple */}
-      <div className="card border-0 shadow-sm">
+      <div className="card border-0 shadow-sm mb-3">
         <div className="card-body">
           <div className="text-muted">
             Année académique active : <strong>{selected?.label || '—'}</strong>
@@ -105,6 +166,165 @@ export default function HomeDashboard() {
           <div className="small text-muted mt-1">
             Dès que vous créez une filière, une classe, une UE, une matière ou un emploi du temps,
             l’année <strong>{selected?.label || '—'}</strong> est enregistrée et utilisée pour tous les filtres.
+          </div>
+        </div>
+      </div>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Bloc statistiques fictives                                       */}
+      {/* ---------------------------------------------------------------- */}
+      <div className="row g-3 mb-3">
+        {/* KPI cards */}
+        <div className="col-12 col-sm-6 col-lg-3">
+          <div className="card border-0 shadow-sm h-100">
+            <div className="card-body">
+              <div className="d-flex align-items-center justify-content-between">
+                <span className="text-muted small">Étudiants</span>
+                <i className="bi bi-mortarboard text-primary fs-5" />
+              </div>
+              <div className="fs-3 fw-semibold mt-1">{stats.etudiants}</div>
+              <div className="small text-success"><i className="bi bi-arrow-up-short" /> +{Math.max(1, Math.floor(stats.etudiants * 0.03))} ce mois</div>
+            </div>
+          </div>
+        </div>
+        <div className="col-12 col-sm-6 col-lg-3">
+          <div className="card border-0 shadow-sm h-100">
+            <div className="card-body">
+              <div className="d-flex align-items-center justify-content-between">
+                <span className="text-muted small">Professeurs</span>
+                <i className="bi bi-person-badge text-primary fs-5" />
+              </div>
+              <div className="fs-3 fw-semibold mt-1">{stats.profs}</div>
+              <div className="small text-muted"><i className="bi bi-people" /> Ratio ~ {Math.max(8, Math.round(stats.etudiants / Math.max(1, stats.profs)))} étudiants / prof</div>
+            </div>
+          </div>
+        </div>
+        <div className="col-12 col-sm-6 col-lg-3">
+          <div className="card border-0 shadow-sm h-100">
+            <div className="card-body">
+              <div className="d-flex align-items-center justify-content-between">
+                <span className="text-muted small">Filières</span>
+                <i className="bi bi-diagram-3 text-primary fs-5" />
+              </div>
+              <div className="fs-3 fw-semibold mt-1">{stats.filieres}</div>
+              <div className="small text-muted">Actives sur {selectedLabel || '—'}</div>
+            </div>
+          </div>
+        </div>
+        <div className="col-12 col-sm-6 col-lg-3">
+          <div className="card border-0 shadow-sm h-100">
+            <div className="card-body">
+              <div className="d-flex align-items-center justify-content-between">
+                <span className="text-muted small">Classes</span>
+                <i className="bi bi-columns-gap text-primary fs-5" />
+              </div>
+              <div className="fs-3 fw-semibold mt-1">{stats.classes}</div>
+              <div className="small text-muted">Capacité moyenne ~ {Math.round(stats.etudiants / Math.max(1, stats.classes))} étudiants</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="row g-3 mb-3">
+        {/* Répartition par niveau */}
+        <div className="col-12 col-lg-6">
+          <div className="card border-0 shadow-sm h-100">
+            <div className="card-header bg-white border-0">
+              <div className="fw-semibold"><i className="bi bi-bar-chart me-2" />Répartition par niveau</div>
+            </div>
+            <div className="card-body">
+              {stats.niveaux.map(n => (
+                <div key={n.k} className="mb-3">
+                  <div className="d-flex justify-content-between">
+                    <span className="small text-muted">{n.k}</span>
+                    <span className="small">{n.v}%</span>
+                  </div>
+                  <div className="progress" role="progressbar" aria-valuenow={n.v} aria-valuemin={0} aria-valuemax={100}>
+                    <div className="progress-bar" style={{ width: `${n.v}%` }} />
+                  </div>
+                </div>
+              ))}
+              <div className="small text-muted">Répartition indicative sur l’année {selectedLabel || '—'}.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Emargements du jour */}
+        <div className="col-12 col-lg-6">
+          <div className="card border-0 shadow-sm h-100">
+            <div className="card-header bg-white border-0">
+              <div className="fw-semibold"><i className="bi bi-journal-check me-2" />Émargements du jour</div>
+            </div>
+            <div className="card-body">
+              <div className="d-flex align-items-center gap-3">
+                <div className="flex-grow-1">
+                  <div className="d-flex justify-content-between">
+                    <span className="small text-muted">Signés</span>
+                    <span className="small fw-semibold">{stats.emargements.signes}/{stats.emargements.attendus}</span>
+                  </div>
+                  <div className="progress" role="progressbar" aria-valuenow={stats.emargements.pct} aria-valuemin={0} aria-valuemax={100}>
+                    <div className="progress-bar" style={{ width: `${stats.emargements.pct}%` }} />
+                  </div>
+                </div>
+                <div className="text-center" style={{ minWidth: 86 }}>
+                  <div className="fw-bold fs-4">{stats.emargements.pct}%</div>
+                  <div className="small text-muted">complété</div>
+                </div>
+              </div>
+              <div className="row text-center mt-3 g-2">
+                <div className="col-6">
+                  <div className="border rounded p-2">
+                    <div className="small text-muted">Assiduité</div>
+                    <div className="fw-semibold fs-5">{stats.tauxAssiduite}%</div>
+                  </div>
+                </div>
+                <div className="col-6">
+                  <div className="border rounded p-2">
+                    <div className="small text-muted">Réussite</div>
+                    <div className="fw-semibold fs-5">{stats.tauxReussite}%</div>
+                  </div>
+                </div>
+              </div>
+              <div className="small text-muted mt-2">Indicateurs simulés pour illustration.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Prochains examens */}
+      <div className="card border-0 shadow-sm mb-4">
+        <div className="card-header bg-white border-0">
+          <div className="fw-semibold"><i className="bi bi-calendar-event me-2" />Prochains examens (fictifs)</div>
+        </div>
+        <div className="card-body p-0">
+          <div className="table-responsive">
+            <table className="table align-middle mb-0">
+              <thead className="table-light">
+                <tr>
+                  <th>Intitulé</th>
+                  <th>Date</th>
+                  <th className="text-end">Préparation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.examens.map((ex, idx) => (
+                  <tr key={idx}>
+                    <td>{ex.lib}</td>
+                    <td>{ex.dateTxt}</td>
+                    <td className="text-end">
+                      <span className="badge bg-light text-dark">
+                        <i className="bi bi-gear me-1" /> En cours
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {stats.examens.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="text-center text-muted py-4">Aucun examen à afficher.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
