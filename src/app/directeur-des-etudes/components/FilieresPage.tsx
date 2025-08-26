@@ -1,3 +1,4 @@
+//src/app/directeur-des-etudes/components/FilieresPage.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -11,6 +12,8 @@ import {
   updateDoc,
   deleteDoc,
   setDoc,
+  getDoc,
+  serverTimestamp,
   orderBy as fbOrderBy,
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
@@ -44,6 +47,8 @@ type TMatiere = {
   libelle: string;
   ue_id?: string | null;
   academic_year_id: string;
+  assigned_prof_id?: string | null;
+  assigned_prof_name?: string | null;
 };
 
 type View =
@@ -133,27 +138,49 @@ async function deleteClasseCascadeByDoc(classe: TClasse) {
   const classId = classe.id;
   const yearId = classe.academic_year_id;
 
-  // 1) matières de la classe+année
+  // 1) matières de la classe+année  ➜ suppr + nettoyage affectations
   const mSnap = await getDocs(
-    query(collection(db, "matieres"), where("class_id", "==", classId), where("academic_year_id", "==", yearId))
+    query(collection(db, "matieres"),
+      where("class_id", "==", classId),
+      where("academic_year_id", "==", yearId))
   );
-  await Promise.all(mSnap.docs.map((d) => deleteDoc(doc(db, "matieres", d.id))));
 
-  // 2) UE de la classe+année
+  await Promise.all(mSnap.docs.map(async (d) => {
+    const v = d.data() as any;
+    const matiereId = d.id;
+    const profId = v.assigned_prof_id as (string | null | undefined);
+
+    await deleteDoc(doc(db, "matieres", matiereId));
+    if (profId) {
+      await removeMatiereFromProfessor({
+        yearId,
+        profId,
+        classeId: classId,
+        matiereId,
+      });
+    }
+  }));
+
+  // 2) UE
   const ueSnap = await getDocs(
-    query(collection(db, "ues"), where("class_id", "==", classId), where("academic_year_id", "==", yearId))
+    query(collection(db, "ues"),
+      where("class_id", "==", classId),
+      where("academic_year_id", "==", yearId))
   );
   await Promise.all(ueSnap.docs.map((d) => deleteDoc(doc(db, "ues", d.id))));
 
-  // 3) EDT de la classe+année
+  // 3) EDT
   const edtSnap = await getDocs(
-    query(collection(db, "edts"), where("class_id", "==", classId), where("annee", "==", yearId))
+    query(collection(db, "edts"),
+      where("class_id", "==", classId),
+      where("annee", "==", yearId))
   );
   await Promise.all(edtSnap.docs.map((d) => deleteDoc(doc(db, "edts", d.id))));
 
   // 4) Classe
   await deleteDoc(doc(db, "classes", classId));
 }
+
 
 async function deleteFiliereCascadeByDoc(filiere: TFiliere) {
   // Récupère toutes les classes de la filière (année courante)
@@ -386,12 +413,15 @@ function FilieresList({
     setEditLibelle(f.libelle);
   };
 
+  // --- FilieresList ---
   const saveEdit = async () => {
     if (!edit) return;
     setEditError(null);
     const label = sanitize(editLibelle);
     if (!label) return setEditError("Libellé requis.");
+
     try {
+      // anti-dup: même libellé (CI), même section, même année
       const snap = await getDocs(
         query(
           collection(db, "filieres"),
@@ -399,18 +429,22 @@ function FilieresList({
           where("academic_year_id", "==", academicYearId)
         )
       );
-      const exists = snap.docs.some((d) => d.id !== edit.id && ci((d.data() as any).libelle) === ci(label));
+      const exists = snap.docs.some(
+        (d) => d.id !== edit.id && ci((d.data() as any).libelle) === ci(label)
+      );
       if (exists) return setEditError("Cette filière existe déjà pour cette année.");
 
       await updateDoc(doc(db, "filieres", edit.id), { libelle: label });
+
       ok("Filière mise à jour.");
       setEdit(null);
-      fetchFilieres();
+      fetchFilieres(); // pas fetchAll()
     } catch (e) {
       console.error(e);
       setEditError("Mise à jour impossible.");
     }
   };
+
 
   const askRemoveFiliere = (f: TFiliere) => {
     setDeleteError(null);
@@ -956,6 +990,94 @@ function ClasseDetail({
   );
 }
 
+// ⬇️ NEW: ajoute une matière dans l’affectation d’un professeur (par année+classe)
+async function upsertAffectationForProfessor(args: {
+  yearId: string;
+  profId: string;
+  classe: TClasse;
+  matiereId: string;
+  matiereLibelle: string;
+}) {
+  const { yearId, profId, classe, matiereId, matiereLibelle } = args;
+  const ref = doc(db, "affectations_professeurs", `${yearId}__${profId}`);
+  const snap = await getDoc(ref);
+  const prev = snap.exists() ? (snap.data() as any) : {};
+  const oldClasses: any[] = Array.isArray(prev.classes) ? prev.classes : [];
+
+  const idx = oldClasses.findIndex((c) => c.classe_id === classe.id);
+  if (idx >= 0) {
+    const setIds = new Set<string>(Array.isArray(oldClasses[idx].matieres_ids) ? oldClasses[idx].matieres_ids : []);
+    setIds.add(matiereId);
+    const ids = Array.from(setIds);
+    const labels = Array.isArray(oldClasses[idx].matieres_libelles) ? oldClasses[idx].matieres_libelles : [];
+    const labelsSet = new Set<string>(labels);
+    labelsSet.add(matiereLibelle);
+    oldClasses[idx] = {
+      ...oldClasses[idx],
+      filiere_id: classe.filiere_id,
+      filiere_libelle: classe.filiere_libelle,
+      classe_id: classe.id,
+      classe_libelle: classe.libelle,
+      matieres_ids: ids,
+      matieres_libelles: Array.from(labelsSet),
+    };
+  } else {
+    oldClasses.push({
+      filiere_id: classe.filiere_id,
+      filiere_libelle: classe.filiere_libelle,
+      classe_id: classe.id,
+      classe_libelle: classe.libelle,
+      matieres_ids: [matiereId],
+      matieres_libelles: [matiereLibelle],
+    });
+  }
+
+  await setDoc(
+    ref,
+    {
+      annee_id: yearId,
+      prof_doc_id: profId,
+      classes: oldClasses,
+      updatedAt: serverTimestamp(),
+      ...(snap.exists() ? {} : { createdAt: serverTimestamp() }),
+    },
+    { merge: true }
+  );
+}
+
+// ⬇️ NEW: retire une matière de l’affectation d’un professeur
+async function removeMatiereFromProfessor(args: {
+  yearId: string;
+  profId: string;
+  classeId: string;
+  matiereId: string;
+}) {
+  const { yearId, profId, classeId, matiereId } = args;
+  const ref = doc(db, "affectations_professeurs", `${yearId}__${profId}`);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const data = snap.data() as any;
+  const oldClasses: any[] = Array.isArray(data.classes) ? data.classes : [];
+
+  const next = oldClasses
+    .map((c) => {
+      if (c.classe_id !== classeId) return c;
+      const ids: string[] = Array.isArray(c.matieres_ids) ? c.matieres_ids : [];
+      const labels: string[] = Array.isArray(c.matieres_libelles) ? c.matieres_libelles : [];
+      const idsNext = ids.filter((x) => x !== matiereId);
+      // on laisse labels tels quels (facultatif), ou on recalcule au besoin plus tard
+      if (idsNext.length === 0) return null; // supprime l’entrée de classe si plus rien
+      return { ...c, matieres_ids: idsNext };
+    })
+    .filter(Boolean);
+
+  await setDoc(
+    ref,
+    { annee_id: yearId, prof_doc_id: profId, classes: next, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
 /* ======================= MATIERES + UE (anti-doublons) ========================= */
 function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) => void; ko: (m: string) => void }) {
   const ITEMS_PER_PAGE = 10;
@@ -966,6 +1088,16 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
 
   // filter UE
   const [ueFilter, setUeFilter] = useState<string>("");
+
+  // ⬇️ NEW (en haut du composant MatieresSection)
+  const [profs, setProfs] = useState<{ id: string; nom: string; prenom: string }[]>([]);
+  const [profsLoading, setProfsLoading] = useState(true);
+  const [profsError, setProfsError] = useState<string | null>(null);
+
+  // NEW: choix prof en création/édition
+  const [matiereProfId, setMatiereProfId] = useState<string>(""); // creation
+  const [editProfId, setEditProfId] = useState<string>("");       // edition
+
 
   // pagination
   const [matPage, setMatPage] = useState<number>(1);
@@ -1048,6 +1180,9 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
           libelle: String(data.libelle || ""),
           ue_id: data.ue_id ?? null,
           academic_year_id: String(data.academic_year_id || ""),
+          assigned_prof_id: data.assigned_prof_id ?? null,
+          assigned_prof_name: data.assigned_prof_name ?? null,
+
         });
       });
       ms.sort((a, b) => a.libelle.localeCompare(b.libelle));
@@ -1059,7 +1194,6 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
       setLoading(false);
     }
   };
-
   useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1090,6 +1224,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
     setAddError(null);
     const label = sanitize(libelle);
     if (!label) return setAddError("Libellé requis.");
+
     try {
       // anti-dup matière (même libellé CI) dans la même classe + année
       const snap = await getDocs(
@@ -1102,16 +1237,35 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
       const exists = snap.docs.some((d) => ci((d.data() as any).libelle) === ci(label));
       if (exists) return setAddError("Cette matière existe déjà pour la classe (année en cours).");
 
-      await addDoc(collection(db, "matieres"), {
+      // professeur choisi dans le select global
+      const prof = matiereProfId ? profs.find((p) => p.id === matiereProfId) : undefined;
+      const profName = prof ? `${prof.prenom} ${prof.nom}` : null;
+
+      const ref = await addDoc(collection(db, "matieres"), {
         class_id: classe.id,
         libelle: label,
         ue_id: matiereUeId || null,
         academic_year_id: classe.academic_year_id,
+        assigned_prof_id: prof ? prof.id : null,
+        assigned_prof_name: profName,
         created_at: Date.now(),
       });
+
+      // MAJ des affectations du prof
+      if (prof) {
+        await upsertAffectationForProfessor({
+          yearId: classe.academic_year_id,
+          profId: prof.id,
+          classe,
+          matiereId: ref.id,
+          matiereLibelle: label,
+        });
+      }
+
       ok("Matière ajoutée.");
       setLibelle("");
       setMatiereUeId("");
+      setMatiereProfId("");
       setShowAdd(false);
       fetchAll();
     } catch (e) {
@@ -1125,7 +1279,39 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
     setEdit(m);
     setEditLibelle(m.libelle);
     setEditUeId(m.ue_id ?? "");
+    setEditProfId(m.assigned_prof_id || "");
   };
+
+  // ⬇️ NEW
+  const fetchProfs = async () => {
+    setProfsLoading(true);
+    setProfsError(null);
+    try {
+      const snap = await getDocs(query(collection(db, "users"), where("role_key", "==", "prof")));
+      const rows: { id: string; nom: string; prenom: string }[] = [];
+      snap.forEach((d) => {
+        const v = d.data() as any;
+        rows.push({ id: d.id, nom: String(v.nom || ""), prenom: String(v.prenom || "") });
+      });
+      rows.sort(
+        (a, b) =>
+          a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }) ||
+          a.prenom.localeCompare(b.prenom, "fr", { sensitivity: "base" })
+      );
+      setProfs(rows);
+    } catch (e) {
+      console.error(e);
+      setProfsError("Impossible de charger les professeurs.");
+    } finally {
+      setProfsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProfs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   const saveEdit = async () => {
     if (!edit) return;
@@ -1143,19 +1329,44 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
       );
       const exists = snap.docs.some((d) => d.id !== edit.id && ci((d.data() as any).libelle) === ci(label));
       if (exists) return setEditError("Cette matière existe déjà pour la classe (année en cours).");
-
+      const oldProfId = edit.assigned_prof_id || "";
+      const newProfId = editProfId || "";
+      const newProf = newProfId ? profs.find((p) => p.id === newProfId) : undefined;
+      const newProfName = newProf ? `${newProf.prenom} ${newProf.nom}` : null;
       await updateDoc(doc(db, "matieres", edit.id), {
         libelle: label,
         ue_id: editUeId || null,
+        assigned_prof_id: newProfId || null,
+        assigned_prof_name: newProfName,
       });
-      ok("Matière mise à jour.");
-      setEdit(null);
-      fetchAll();
-    } catch (e) {
-      console.error(e);
-      setEditError("Mise à jour impossible.");
-    }
-  };
+
+      // MAJ des affectations si le prof a changé
+      if (oldProfId && oldProfId !== newProfId) {
+        await removeMatiereFromProfessor({
+          yearId: classe.academic_year_id,
+          profId: oldProfId,
+          classeId: classe.id,
+          matiereId: edit.id,
+        });
+      }
+            if (newProfId && oldProfId !== newProfId) {
+              await upsertAffectationForProfessor({
+                yearId: classe.academic_year_id,
+                profId: newProfId,
+                classe,
+                matiereId: edit.id,
+                matiereLibelle: label,
+              });
+            }
+
+            ok("Matière mise à jour.");
+            setEdit(null);
+            fetchAll();
+          } catch (e) {
+            console.error(e);
+            setEditError("Mise à jour impossible.");
+          }
+      };
 
   // suppression matière
   const askRemoveMatiere = (id: string) => {
@@ -1172,7 +1383,24 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      await deleteDoc(doc(db, "matieres", deleteId));
+      // ⬇️ NEW: récupérer le prof assigné avant suppression
+      const mref = doc(db, "matieres", deleteId);
+      const msnap = await getDoc(mref);
+      const mdata = msnap.exists() ? (msnap.data() as any) : null;
+      const oldProfId: string | undefined = mdata?.assigned_prof_id || undefined;
+
+      await deleteDoc(mref);
+
+      // ⬇️ NEW: MAJ affectations du prof
+      if (oldProfId) {
+        await removeMatiereFromProfessor({
+          yearId: classe.academic_year_id,
+          profId: oldProfId,
+          classeId: classe.id,
+          matiereId: deleteId,
+        });
+      }
+
       ok("Matière supprimée.");
       cancelRemoveMatiere();
       fetchAll();
@@ -1182,6 +1410,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
       setDeleteBusy(false);
     }
   };
+
 
   // --- UE: éditer ---
   const openUeEdit = (u: TUE) => {
@@ -1418,6 +1647,24 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
         </div>
       </div>
 
+      <div className="mb-1">
+        <label className="form-label">Assigner à un professeur (optionnel)</label>
+        {profsError ? <div className="alert alert-warning py-1 px-2 mb-2">{profsError}</div> : null}
+        <select
+          className="form-select"
+          value={matiereProfId}
+          onChange={(e) => setMatiereProfId(e.target.value)}
+          disabled={profsLoading}
+        >
+          <option value="">— Aucun —</option>
+          {profs.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.prenom} {p.nom}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <div className="card border-0">
         <div className="card-body p-0">
           {loading ? (
@@ -1550,6 +1797,23 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
                         <option key={u.id} value={u.id}>
                           {u.libelle}
                           {u.code ? ` (${u.code})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mt-3">
+                    <label className="form-label">Professeur (optionnel)</label>
+                    {profsError ? <div className="alert alert-warning py-1 px-2 mb-2">{profsError}</div> : null}
+                    <select
+                      className="form-select"
+                      value={editProfId}
+                      onChange={(e) => setEditProfId(e.target.value)}
+                      disabled={profsLoading}
+                    >
+                      <option value="">— Aucun —</option>
+                      {profs.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.prenom} {p.nom}
                         </option>
                       ))}
                     </select>
@@ -1853,6 +2117,12 @@ function EDTSection({
   const toggleDayPreview = (day: number) =>
     setOpenDaysPreview((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
 
+  const matById = React.useMemo(
+  () => Object.fromEntries(matieres.map((m) => [m.id, m])),
+  [matieres]
+);
+
+
   // PDF preview
   const [pdfMode, setPdfMode] = React.useState(false);
   const [pdfUrl, setPdfUrl] = React.useState<string>("");
@@ -1879,6 +2149,8 @@ function EDTSection({
             libelle: String(v.libelle || ""),
             ue_id: v.ue_id ?? null,
             academic_year_id: String(v.academic_year_id || ""),
+            assigned_prof_id: v.assigned_prof_id ?? null,
+            assigned_prof_name: v.assigned_prof_name ?? null,
           });
         });
         listM.sort((a, b) => a.libelle.localeCompare(b.libelle));
@@ -2152,9 +2424,9 @@ function EDTSection({
         head: [["Heure", "Matière", "Salle", "Enseignant"]],
         body: list.map((s) => [
           `${formatFR(s.start)} — ${formatFR(s.end)}`,
-          s.matiere_libelle || "",
+          (matById[s.matiere_id]?.libelle) || s.matiere_libelle || "",
           s.salle || "—",
-          s.enseignant || "—",
+          (matById[s.matiere_id]?.assigned_prof_name) || s.enseignant || "—",
         ]),
         styles: { font: "helvetica", fontSize: 10, cellPadding: 6, lineColor: [210, 210, 210], lineWidth: 0.2 },
         headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: "bold" },
@@ -2401,7 +2673,7 @@ function EDTSection({
                       <div className="text-muted">Génération du PDF…</div>
                     )
                   ) : (
-                    renderDayReadonly(preview.edt.slots)
+                    renderDayReadonly(preview.edt.slots, matById)
                   )}
                 </div>
               </div>
@@ -2443,7 +2715,7 @@ function slotsToDraft(slots: TEDTSlot[]): Record<number, TEDTSlot[]> {
   Object.values(draft).forEach((list) => list.sort((a, b) => toMinutes(a.start) - toMinutes(b.start)));
   return draft;
 }
-function renderDayReadonly(slots: TEDTSlot[]) {
+function renderDayReadonly(slots: TEDTSlot[], matieresById?: Record<string, TMatiere>) {
   const days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
   const grouped: Record<number, TEDTSlot[]> = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
   (slots ?? []).forEach((s) => grouped[s.day].push(s));
@@ -2473,9 +2745,9 @@ function renderDayReadonly(slots: TEDTSlot[]) {
                         <td>
                           {formatFR(s.start)} — {formatFR(s.end)}
                         </td>
-                        <td>{s.matiere_libelle}</td>
+                        <td>{matieresById?.[s.matiere_id]?.libelle || s.matiere_libelle}</td>
                         <td>{s.salle || "—"}</td>
-                        <td>{s.enseignant || "—"}</td>
+                        <td>{matieresById?.[s.matiere_id]?.assigned_prof_name || s.enseignant || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2526,6 +2798,7 @@ function renderDayEditors(args: {
   onToggleDay?: (day: number) => void;
 }): React.ReactNode {
   const { mode, draft, matieres, addSlot, removeSlot, updateSlot, openDays = [1, 2, 3, 4, 5, 6], onToggleDay } = args;
+  const mapById = Object.fromEntries(matieres.map((m) => [m.id, m])) as Record<string, TMatiere>;
   const days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
   return (
     <div>
@@ -2577,7 +2850,11 @@ function renderDayEditors(args: {
                               <select
                                 className="form-select"
                                 value={s.matiere_id}
-                                onChange={(e) => updateSlot(day, idx, { matiere_id: e.target.value })}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const assigned = val ? (mapById[val]?.assigned_prof_name || "") : "";
+                                  updateSlot(day, idx, { matiere_id: val, enseignant: assigned || "" });
+                                }}
                               >
                                 <option value="">— Choisir —</option>
                                 {matieres.map((m) => (
@@ -2622,12 +2899,19 @@ function renderDayEditors(args: {
                               />
                             </td>
                             <td>
-                              <input
-                                className="form-control"
-                                value={s.enseignant}
-                                onChange={(e) => updateSlot(day, idx, { enseignant: e.target.value })}
-                                placeholder="Nom enseignant"
-                              />
+                              {(() => {
+                                const assignedName =
+                                  s.matiere_id ? (mapById[s.matiere_id]?.assigned_prof_name || "") : "";
+                                return (
+                                  <input
+                                    className="form-control"
+                                    value={assignedName || s.enseignant}
+                                    onChange={(e) => updateSlot(day, idx, { enseignant: e.target.value })}
+                                    placeholder="Nom enseignant"
+                                    disabled={!!assignedName}
+                                  />
+                                );
+                              })()}
                             </td>
                             <td>
                               <button className="btn btn-outline-danger btn-sm" onClick={() => removeSlot(day, idx)}>

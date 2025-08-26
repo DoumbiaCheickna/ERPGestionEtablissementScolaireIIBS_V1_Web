@@ -16,6 +16,8 @@ import { db } from "../../../../../firebaseConfig";
 
 import { getApp, getApps, initializeApp, FirebaseOptions } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, updateProfile, signOut } from "firebase/auth";
+import { useAcademicYear } from "../../../directeur-des-etudes/context/AcademicYearContext";
+
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -85,6 +87,9 @@ const days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dima
 /* Composant                                                          */
 /* ------------------------------------------------------------------ */
 export default function ProfesseurForm({ roles, mode, docId, onClose, onSaved }: Props) {
+  const { selected } = useAcademicYear();            // ← année sélectionnée
+  const selectedYearId = selected?.id || "";
+  const selectedYearLabel = selected?.label || "";
   const profRoleId = useMemo(() => {
     const r = roles.find((x) => x.libelle?.toLowerCase().trim() === "professeur");
     return r ? String(r.id) : "";
@@ -168,7 +173,7 @@ export default function ProfesseurForm({ roles, mode, docId, onClose, onSaved }:
           nom: d.nom || "",
           prenom: d.prenom || "",
           // password laissé vide et non utilisé en edit
-          role_id: String(d.role_id ?? profRoleId || ""),
+          role_id: String(d.role_id ?? profRoleId ?? ""),
           specialite: d.specialite || d.specialty || "",
           specialite_detaillee: d.specialite_detaillee || "",
           date_naissance: d.date_naissance || "",
@@ -504,6 +509,8 @@ export default function ProfesseurForm({ roles, mode, docId, onClose, onSaved }:
       documents: fileUrls,
       auth_uid: authUid,
       first_login: "1",
+      academic_year_id: selectedYearId || null,
+      academic_year_label: selectedYearLabel || null, 
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -511,16 +518,25 @@ export default function ProfesseurForm({ roles, mode, docId, onClose, onSaved }:
 
   const updateUserDoc = async () => {
     if (!docId) throw new Error("docId manquant pour l’édition.");
+
+    // Charger l’existant pour savoir si les champs d’année sont déjà là
+    const snap = await getDoc(doc(db, "users", docId));
+    const cur = snap.exists() ? (snap.data() as any) : {};
+
     const roleObj = roles.find((r) => String(r.id) === String(form.role_id));
     const role_libelle = roleObj?.libelle || "Professeur";
-    const role_key =
-      role_libelle.toLowerCase().trim() === "professeur" ? ROLE_PROF_KEY : toRoleKey(role_libelle);
+    const role_key = role_libelle.toLowerCase().trim() === "professeur" ? ROLE_PROF_KEY : toRoleKey(role_libelle);
 
     const phoneFull = `+221 ${form.telephoneLocal}`;
 
     await setDoc(
       doc(db, "users", docId),
       {
+        // ==== champs "année" seulement s’ils manquent déjà ====
+        ...(cur.academic_year_id ? {} : { academic_year_id: selectedYearId || null }),
+        ...(cur.academic_year_label ? {} : { academic_year_label: selectedYearLabel || null }),
+
+        // ==== le reste de ta mise à jour ====
         role_id: String(form.role_id),
         role_libelle,
         role_key,
@@ -560,7 +576,6 @@ export default function ProfesseurForm({ roles, mode, docId, onClose, onSaved }:
           publications: form.competences.publications.map(sanitize).filter(Boolean),
         },
         rib: sanitize(form.rib || ""),
-        // pas de ré-upload documents ici (à gérer dans un écran dédié si besoin)
         updatedAt: serverTimestamp(),
       },
       { merge: true }

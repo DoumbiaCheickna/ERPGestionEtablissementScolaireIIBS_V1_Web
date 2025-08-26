@@ -1,3 +1,4 @@
+// src/app/directeur-des-etudes/components/HomeDashboard.tsx 
 'use client';
 
 import React from 'react';

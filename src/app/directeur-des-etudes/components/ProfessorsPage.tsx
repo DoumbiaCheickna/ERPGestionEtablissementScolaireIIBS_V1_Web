@@ -19,6 +19,7 @@ import Toast from "../../admin/components/ui/Toast";
 
 // ✅ formulaire modale (création & édition)
 import ProfesseurForm from "../../admin/pages/users/professeurForm";
+import { useAcademicYear } from "../context/AcademicYearContext";
 
 /* ------------------------------------------------------------------ */
 const ROLE_PROF_KEY = "prof";
@@ -130,6 +131,10 @@ const ProfesseurFormTyped = ProfesseurForm as unknown as React.ComponentType<Pro
 /* ------------------------------------------------------------------ */
 
 export default function ProfessorsPage() {
+  const { selected } = useAcademicYear();
+  const selectedYearId = selected?.id || "";
+  const selectedYearLabel = selected?.label || "";
+
   /* === Référentiels === */
   const [roles, setRoles] = useState<TRole[]>([]);
   const [filieres, setFilieres] = useState<TFiliere[]>([]);
@@ -137,10 +142,10 @@ export default function ProfessorsPage() {
   const [matieres, setMatieres] = useState<TMatiere[]>([]);
   const [annees, setAnnees] = useState<TAnnee[]>([]);
 
-  const filiereById = useMemo(() => Object.fromEntries(filieres.map(f => [f.id, f])), [filieres]);
+  const filiereById = useMemo(() => Object.fromEntries(filieres.map((f) => [f.id, f])), [filieres]);
   const classesByFiliere = useMemo(() => {
     const m: Record<string, TClasse[]> = {};
-    classes.forEach(c => {
+    classes.forEach((c) => {
       const fid = c.filiere_id || "";
       if (!m[fid]) m[fid] = [];
       m[fid].push(c);
@@ -149,7 +154,7 @@ export default function ProfessorsPage() {
   }, [classes]);
   const matieresByClass = useMemo(() => {
     const m: Record<string, TMatiere[]> = {};
-    matieres.forEach(x => {
+    matieres.forEach((x) => {
       const cid = x.class_id || "";
       if (!m[cid]) m[cid] = [];
       m[cid].push(x);
@@ -160,6 +165,14 @@ export default function ProfessorsPage() {
   /* === Liste (client) === */
   const [all, setAll] = useState<TUserRow[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Transfert
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [transferDocId, setTransferDocId] = useState<string | null>(null);
+  const [transferYearId, setTransferYearId] = useState<string>("");
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferErr, setTransferErr] = useState("");
+
 
   // recherche / tri / pagination (côté client)
   const [search, setSearch] = useState("");
@@ -176,7 +189,7 @@ export default function ProfessorsPage() {
     const q = search.trim().toLowerCase();
     if (!q) return sortRows(all);
     return sortRows(
-      all.filter(u => `${u.nom} ${u.prenom} ${u.specialite || ""}`.toLowerCase().includes(q))
+      all.filter((u) => `${u.nom} ${u.prenom} ${u.specialite || ""}`.toLowerCase().includes(q))
     );
   }, [all, search]);
 
@@ -194,8 +207,14 @@ export default function ProfessorsPage() {
   const [toast, setToast] = useState("");
   const [okShow, setOkShow] = useState(false);
   const [errShow, setErrShow] = useState(false);
-  const ok = (m: string) => { setToast(m); setOkShow(true); };
-  const ko = (m: string) => { setToast(m); setErrShow(true); };
+  const ok = (m: string) => {
+    setToast(m);
+    setOkShow(true);
+  };
+  const ko = (m: string) => {
+    setToast(m);
+    setErrShow(true);
+  };
 
   /* === Modales === */
   const [showCreate, setShowCreate] = useState(false);
@@ -209,6 +228,15 @@ export default function ProfessorsPage() {
   const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+
+  // (nouveau) état pour "Retirer (année sélectionnée)"
+  const [removingFromYear, setRemovingFromYear] = useState(false);
+
+  // Affichage prénom/nom dans la modale de suppression
+  const deleteTarget = useMemo(
+    () => all.find((u) => u.docId === deleteDocId) || null,
+    [all, deleteDocId]
+  );
 
   // === Assignation (Section -> Filière -> Classe -> Matières) ===
   type TDraft = {
@@ -233,6 +261,9 @@ export default function ProfessorsPage() {
     { section: SectionKey; filiere_id: string; classe_id: string; matieres_ids: string[] }[]
   >([]);
 
+  // mode édition d'une affectation
+  const [editingClasseId, setEditingClasseId] = useState<string | null>(null);
+
   /* ---------------------- fetch référentiels ------------------------ */
   const fetchRoles = async () => {
     const snap = await getDocs(collection(db, "roles"));
@@ -252,7 +283,7 @@ export default function ProfessorsPage() {
       rows.push({
         id: d.id,
         libelle: String(v.libelle || d.id),
-        section: (v.section === "Gestion" || v.section === "Informatique") ? v.section : undefined,
+        section: v.section === "Gestion" || v.section === "Informatique" ? v.section : undefined,
         academic_year_id: String(v.academic_year_id || ""),
       });
     });
@@ -298,27 +329,143 @@ export default function ProfessorsPage() {
     setAnnees(ys);
   };
 
-  // Liste des profs (sans orderBy) → tri & pagination côté client
-  const fetchProfs = async () => {
+  /* ---------------------- Helpers robustes -------------------------- */
+  const toDate = (val: any): Date | null => {
+    if (!val) return null;
+    if (typeof val === "object" && typeof (val as any).toDate === "function") return (val as any).toDate(); // Firestore Timestamp
+    if (typeof val === "number") return new Date(val); // epoch millis
+    if (typeof val === "string") return new Date(val); // ISO string
+    if (val instanceof Date) return val;
+    return null;
+  };
+
+  const parseYearLabelToBounds = (label: string) => {
+    // Année académique: 1er août N -> 31 juillet N+1
+    // label attendu: "YYYY-YYYY"
+    const [l, r] = (label || "").split("-").map((x) => parseInt(x, 10));
+    if (!Number.isFinite(l) || !Number.isFinite(r)) return null;
+    const start = new Date(l, 7, 1, 0, 0, 0, 0); // 1 août (mois 7)
+    const end = new Date(r, 6, 31, 23, 59, 59, 999); // 31 juillet
+    return { start, end };
+  };
+
+  /**
+   * Vrai si le document "v" appartient à l'année sélectionnée.
+   * - par id: academic_year_id / academicYearId / annee_id / annee / year_id
+   * - par label: academic_year_label / annee_label / annee_scolaire_label / year_label
+   * - par date: createdAt / created_at / created / created_on / date_creation / updatedAt / updated_at
+   */
+  const matchesSelectedYear = (v: any, yearId: string, yearLabel: string): boolean => {
+    if (!yearId && !yearLabel) return false;
+
+    // 1) Candidats "id"
+    const idCandidates = [
+      v?.academic_year_id,
+      v?.academicYearId,
+      v?.annee_id,
+      v?.annee,
+      v?.year_id,
+    ].filter(Boolean).map(String);
+
+    // 2) Candidats "label"
+    const labelCandidates = [
+      v?.academic_year_label,
+      v?.annee_label,
+      v?.annee_scolaire_label,
+      v?.year_label,
+    ].filter(Boolean).map(String);
+
+    const hasYearMeta = idCandidates.length > 0 || labelCandidates.length > 0;
+
+    // Si métadonnées présentes → elles font autorité (pas de fallback par date)
+    if (yearId && idCandidates.some((x) => x === yearId)) return true;
+    if (yearLabel && labelCandidates.some((x) => x === yearLabel)) return true;
+    if (hasYearMeta) return false;
+
+    // 3) Fallback par date UNIQUEMENT si aucune métadonnée d’année
+    const bounds = yearLabel ? parseYearLabelToBounds(yearLabel) : null;
+    if (!bounds) return false;
+
+    // Utiliser seulement des dates de création (pas updatedAt)
+    const dateCandidates = [v?.createdAt, v?.created_at, v?.created, v?.created_on, v?.date_creation];
+    for (const dc of dateCandidates) {
+      const d = toDate(dc);
+      if (d && d >= bounds.start && d <= bounds.end) return true;
+    }
+    return false;
+  };
+
+  /* ---------------------- Liste des profs (année) ------------------- */
+  const fetchProfsForYear = async (yearId: string, yearLabel: string) => {
     setLoading(true);
     try {
-      const qy = query(collection(db, "users"), where("role_key", "==", ROLE_PROF_KEY));
-      const snap = await getDocs(qy);
-      const rows: TUserRow[] = [];
-      snap.forEach((d) => {
-        const v = d.data() as DocumentData;
-        rows.push({
-          docId: d.id,
-          id: v.id,
-          nom: v.nom || "",
-          prenom: v.prenom || "",
-          specialite: v.specialite || v.specialty || "",
-          role_id: v.role_id !== undefined && v.role_id !== null ? String(v.role_id) : undefined,
-          role_libelle: v.role_libelle,
-          role_key: v.role_key,
+      if (!yearId && !yearLabel) {
+        setAll([]);
+        return;
+      }
+
+      const rowsMap = new Map<string, TUserRow>();
+
+      // A) Tous les users "prof" → filtre côté client (tolérant schémas)
+      try {
+        const uq = query(collection(db, "users"), where("role_key", "==", ROLE_PROF_KEY));
+        const usnap = await getDocs(uq);
+        usnap.forEach((d) => {
+          const v = d.data() as DocumentData;
+          if (matchesSelectedYear(v, yearId, yearLabel)) {
+            rowsMap.set(d.id, {
+              docId: d.id,
+              id: v.id,
+              nom: v.nom || "",
+              prenom: v.prenom || "",
+              specialite: v.specialite || v.specialty || "",
+              role_id: v.role_id !== undefined && v.role_id !== null ? String(v.role_id) : undefined,
+              role_libelle: v.role_libelle,
+              role_key: v.role_key,
+            });
+          }
         });
-      });
-      setAll(rows);
+      } catch (e) {
+        console.warn("users query failed", e);
+      }
+
+      // B) Union avec les profs ayant une affectation sur l’année
+      if (yearId) {
+        const affQ = query(collection(db, "affectations_professeurs"), where("annee_id", "==", yearId));
+        const affSnap = await getDocs(affQ);
+
+        const profIds = new Set<string>();
+        affSnap.forEach((d) => {
+          const v = d.data() as any;
+          const fromField = v?.prof_doc_id ? String(v.prof_doc_id) : "";
+          const fromKey = d.id.includes("__") ? d.id.split("__")[1] : "";
+          const id = fromField || fromKey;
+          if (id) profIds.add(id);
+        });
+
+        await Promise.all(
+          Array.from(profIds).map(async (pid) => {
+            if (rowsMap.has(pid)) return; // déjà ajouté via (A)
+            const uref = doc(db, "users", pid);
+            const usnap = await getDoc(uref);
+            if (!usnap.exists()) return;
+            const v = usnap.data() as DocumentData;
+            if (v.role_key !== ROLE_PROF_KEY) return;
+            rowsMap.set(usnap.id, {
+              docId: usnap.id,
+              id: v.id,
+              nom: v.nom || "",
+              prenom: v.prenom || "",
+              specialite: v.specialite || v.specialty || "",
+              role_id: v.role_id !== undefined && v.role_id !== null ? String(v.role_id) : undefined,
+              role_libelle: v.role_libelle,
+              role_key: v.role_key,
+            });
+          })
+        );
+      }
+
+      setAll(Array.from(rowsMap.values()));
     } catch (e) {
       console.error(e);
       ko("Erreur lors du chargement des professeurs.");
@@ -329,13 +476,17 @@ export default function ProfessorsPage() {
 
   const bootstrap = async () => {
     await Promise.all([fetchRoles(), fetchFilieres(), fetchClasses(), fetchMatieres(), fetchAnnees()]);
-    await fetchProfs();
   };
 
   useEffect(() => {
     bootstrap();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Quand l’année sélectionnée change → recharge la liste des profs
+  useEffect(() => {
+    fetchProfsForYear(selectedYearId, selectedYearLabel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYearId, selectedYearLabel]);
 
   const activeAnneeId = useMemo(() => {
     const a = annees.find((x) => x.active);
@@ -417,7 +568,7 @@ export default function ProfessorsPage() {
       await deleteDoc(doc(db, "users", deleteDocId));
       setShowDelete(false);
       setDeleteDocId(null);
-      await fetchProfs();
+      await fetchProfsForYear(selectedYearId, selectedYearLabel);
       ok("Professeur supprimé.");
     } catch (e: any) {
       console.error(e);
@@ -427,44 +578,121 @@ export default function ProfessorsPage() {
     }
   };
 
+  /* ---------------------- Helpers: ressources par année -------------- */
+  // Mémos pour l'UI (se recalculent quand anneeId change)
+  const filieresYear = useMemo(
+    () => filieres.filter((f) => (anneeId ? f.academic_year_id === anneeId : true)),
+    [filieres, anneeId]
+  );
+  const classesYear = useMemo(
+    () => classes.filter((c) => (anneeId ? c.academic_year_id === anneeId : true)),
+    [classes, anneeId]
+  );
+  const classesByFiliereYear = useMemo(() => {
+    const m: Record<string, TClasse[]> = {};
+    classesYear.forEach((c) => {
+      const fid = c.filiere_id || "";
+      if (!m[fid]) m[fid] = [];
+      m[fid].push(c);
+    });
+    return m;
+  }, [classesYear]);
+
+  const matieresYear = useMemo(
+    () =>
+      matieres.filter((m) => {
+        if (!m.class_id) return false;
+        return classesYear.some((c) => c.id === m.class_id);
+      }),
+    [matieres, classesYear]
+  );
+  const matieresByClassYear = useMemo(() => {
+    const m: Record<string, TMatiere[]> = {};
+    matieresYear.forEach((x) => {
+      const cid = x.class_id || "";
+      if (!m[cid]) m[cid] = [];
+      m[cid].push(x);
+    });
+    return m;
+  }, [matieresYear]);
+
+  const filiereByIdYear = useMemo(
+    () => Object.fromEntries(filieresYear.map((f) => [f.id, f])),
+    [filieresYear]
+  );
+
+  // Helper pur
+  const computeYearScopedMaps = (year: string) => {
+    const filieresY = filieres.filter((f) => f.academic_year_id === year);
+    const classesY = classes.filter((c) => c.academic_year_id === year);
+    const matieresY = matieres.filter((m) => m.class_id && classesY.some((c) => c.id === m.class_id));
+    const classesByFiliereY: Record<string, TClasse[]> = {};
+    classesY.forEach((c) => {
+      const fid = c.filiere_id || "";
+      if (!classesByFiliereY[fid]) classesByFiliereY[fid] = [];
+      classesByFiliereY[fid].push(c);
+    });
+    const matieresByClassY: Record<string, TMatiere[]> = {};
+    matieresY.forEach((x) => {
+      const cid = x.class_id || "";
+      if (!matieresByClassY[cid]) matieresByClassY[cid] = [];
+      matieresByClassY[cid].push(x);
+    });
+    const filiereByIdY = Object.fromEntries(filieresY.map((f) => [f.id, f]));
+    return { filieresY, classesY, classesByFiliereY, matieresY, matieresByClassY, filiereByIdY };
+  };
+
   /* ---------------------- Assignation ------------------------------- */
+
+  // charge les affectations pour une année donnée
+  const loadAssignFor = async (year: string, profId: string) => {
+    setDraft({ matieres_ids: [] });
+    setDraftList([]);
+    try {
+      const { classesY, matieresByClassY, filiereByIdY } = computeYearScopedMaps(year);
+      const ref = doc(db, "affectations_professeurs", `${year}__${profId}`);
+      const d = await getDoc(ref);
+      if (d.exists()) {
+        const data = d.data() as any;
+        const existing: typeof draftList = [];
+        (data.classes || []).forEach((c: any) => {
+          const cls = classesY.find((x) => x.id === c.classe_id);
+          const filiereId = c.filiere_id || cls?.filiere_id || "";
+          const filiere = filiereByIdY[filiereId];
+          const sec =
+            filiere?.section === "Gestion" || filiere?.section === "Informatique"
+              ? filiere.section
+              : undefined;
+          if (!filiereId || !sec || !c.classe_id) return;
+          const mats = (Array.isArray(c.matieres_ids) ? c.matieres_ids : []).filter((mid: string) =>
+            (matieresByClassY[c.classe_id] || []).some((mm) => mm.id === mid)
+          );
+          existing.push({
+            section: sec,
+            filiere_id: filiereId,
+            classe_id: c.classe_id,
+            matieres_ids: mats,
+          });
+        });
+        setDraftList(existing);
+      } else {
+        setDraftList([]);
+      }
+    } catch (e) {
+      console.error(e);
+      setDraftList([]);
+    }
+  };
+
   const openAssign = async (docId: string) => {
     setAssignForDocId(docId);
     setAssignErr("");
     setAssignOk("");
-    setAnneeId(activeAnneeId);
-    setDraft({ matieres_ids: [] });
-    setDraftList([]);
+    setEditingClasseId(null);
 
-    try {
-      // précharger si déjà affecté (ancien ou nouveau format)
-      if (activeAnneeId) {
-        const ref = doc(db, "affectations_professeurs", `${activeAnneeId}__${docId}`);
-        const d = await getDoc(ref);
-        if (d.exists()) {
-          const data = d.data() as any;
-          const existing: typeof draftList = [];
-          (data.classes || []).forEach((c: any) => {
-            const cls = classes.find(x => x.id === c.classe_id);
-            const filiereId = c.filiere_id || cls?.filiere_id || "";
-            const filiere = filiereById[filiereId];
-            const sec = (filiere?.section === "Gestion" || filiere?.section === "Informatique")
-              ? filiere.section : undefined;
-            if (!filiereId || !sec || !c.classe_id) return;
-            existing.push({
-              section: sec,
-              filiere_id: filiereId,
-              classe_id: c.classe_id,
-              matieres_ids: Array.isArray(c.matieres_ids) ? c.matieres_ids : [],
-            });
-          });
-          setDraftList(existing);
-          setAnneeId(data.annee_id || activeAnneeId);
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
+    const startYear = selectedYearId || activeAnneeId;
+    setAnneeId(startYear);
+    await loadAssignFor(startYear, docId);
 
     setShowAssign(true);
   };
@@ -475,15 +703,13 @@ export default function ProfessorsPage() {
     if (!draft.filiere_id) return setAssignErr("Sélectionnez une filière.");
     if (!draft.classe_id) return setAssignErr("Sélectionnez une classe.");
     const matList = draft.matieres_ids || [];
-    // autoriser zéro matière ? → mieux d’exiger au moins une
     if (matList.length === 0) return setAssignErr("Cochez au moins une matière.");
 
-    // éviter doublons classe
-    if (draftList.some(d => d.classe_id === draft.classe_id)) {
+    if (draftList.some((d) => d.classe_id === draft.classe_id)) {
       return setAssignErr("Cette classe est déjà dans la liste d’affectations.");
     }
 
-    setDraftList(prev => [
+    setDraftList((prev) => [
       ...prev,
       {
         section: draft.section!,
@@ -493,12 +719,11 @@ export default function ProfessorsPage() {
       },
     ]);
 
-    // reset sélecteurs pour ajouter une autre affectation
     setDraft({ matieres_ids: [] });
   };
 
   const removeDraft = (classe_id: string) => {
-    setDraftList(prev => prev.filter(d => d.classe_id !== classe_id));
+    setDraftList((prev) => prev.filter((d) => d.classe_id !== classe_id));
   };
 
   const saveAssign = async () => {
@@ -507,25 +732,38 @@ export default function ProfessorsPage() {
     setAssignOk("");
 
     try {
-      const year = anneeId || activeAnneeId;
+      const year = anneeId || selectedYearId || activeAnneeId;
       if (!year) {
         setAssignBusy(false);
         return setAssignErr("Choisissez une année scolaire.");
       }
+
+      if (editingClasseId) {
+        setAssignBusy(false);
+        return setAssignErr("Terminez l’édition de l’affectation en cours ou annulez-la.");
+      }
+
       if (draftList.length === 0) {
         setAssignBusy(false);
         return setAssignErr("Ajoutez au moins une affectation.");
       }
 
-      const classesPayload = draftList.map(it => {
-        const c = classes.find(x => x.id === it.classe_id);
-        const mats = (matieresByClass[it.classe_id] || []) as TMatiere[];
+      const map = new Map<
+        string,
+        { section: SectionKey; filiere_id: string; classe_id: string; matieres_ids: string[] }
+      >();
+      draftList.forEach((it) => map.set(it.classe_id, it));
+      const dedup = Array.from(map.values());
+
+      const classesPayload = dedup.map((it) => {
+        const c = classesYear.find((x) => x.id === it.classe_id);
+        const mats = (matieresByClassYear[it.classe_id] || []) as TMatiere[];
         const labels = it.matieres_ids
-          .map(id => mats.find(m => m.id === id)?.libelle)
+          .map((id) => mats.find((m) => m.id === id)?.libelle)
           .filter(Boolean) as string[];
         return {
           filiere_id: it.filiere_id,
-          filiere_libelle: filiereById[it.filiere_id]?.libelle || "",
+          filiere_libelle: filiereByIdYear[it.filiere_id]?.libelle || "",
           classe_id: it.classe_id,
           classe_libelle: c?.libelle || it.classe_id,
           matieres_ids: it.matieres_ids,
@@ -533,23 +771,26 @@ export default function ProfessorsPage() {
         };
       });
 
+      const ref = doc(db, "affectations_professeurs", `${year}__${assignForDocId}`);
+      const old = await getDoc(ref);
       await setDoc(
-        doc(db, "affectations_professeurs", `${year}__${assignForDocId}`),
+        ref,
         {
           annee_id: year,
           prof_doc_id: assignForDocId,
           classes: classesPayload,
           updatedAt: serverTimestamp(),
-          createdAt: serverTimestamp(),
-        }
+          ...(old.exists() ? {} : { createdAt: serverTimestamp() }),
+        },
+        { merge: true }
       );
 
       setAssignOk("Affectations enregistrées.");
-      setTimeout(() => {
-        setShowAssign(false);
-        setAssignForDocId(null);
-        setAssignOk("");
-      }, 700);
+
+      if (selectedYearId === year) {
+        await fetchProfsForYear(selectedYearId, selectedYearLabel);
+      }
+      if (assignForDocId) await loadAssignFor(year, assignForDocId);
     } catch (e) {
       console.error(e);
       setAssignErr("Enregistrement impossible.");
@@ -558,6 +799,123 @@ export default function ProfessorsPage() {
     }
   };
 
+  /* ---------------------- Transfert (bouton par ligne) -------------- */
+  const transferProfessorToSelectedYear = async (profId: string) => {
+    if (!selectedYearId) return ko("Aucune année sélectionnée.");
+    try {
+      const ref = doc(db, "affectations_professeurs", `${selectedYearId}__${profId}`);
+      const old = await getDoc(ref);
+      await setDoc(
+        ref,
+        {
+          annee_id: selectedYearId,
+          prof_doc_id: profId,
+          classes: [], // transfert → vide initialement
+          updatedAt: serverTimestamp(),
+          ...(old.exists() ? {} : { createdAt: serverTimestamp() }),
+        },
+        { merge: true }
+      );
+      ok("Professeur transféré sur l’année sélectionnée.");
+      await fetchProfsForYear(selectedYearId, selectedYearLabel);
+    } catch (e) {
+      console.error(e);
+      ko("Transfert impossible.");
+    }
+  };
+
+  /* ------------------- Retirer (année sélectionnée) ------------------ */
+  const removeProfessorFromSelectedYear = async (profId: string) => {
+    if (!selectedYearId) return ko("Aucune année sélectionnée.");
+    setRemovingFromYear(true);
+    try {
+      // 1) Supprimer l’affectation de l’année sélectionnée
+      await deleteDoc(doc(db, "affectations_professeurs", `${selectedYearId}__${profId}`));
+
+      // 2) Neutraliser l’appartenance par métadonnées si elles pointent sur cette année
+      const uref = doc(db, "users", profId);
+      const usnap = await getDoc(uref);
+      if (usnap.exists()) {
+        const v = usnap.data() as any;
+        const idMatches = String(v?.academic_year_id || "") === selectedYearId;
+        const labelMatches = String(v?.academic_year_label || "") === selectedYearLabel;
+        if (idMatches || labelMatches) {
+          await setDoc(
+            uref,
+            {
+              academic_year_id: "__none__",
+              academic_year_label: "__none__",
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      }
+
+      ok("Professeur retiré de l’année sélectionnée.");
+      await fetchProfsForYear(selectedYearId, selectedYearLabel);
+    } catch (e) {
+      console.error(e);
+      ko("Retrait impossible.");
+    } finally {
+      setRemovingFromYear(false);
+    }
+  };
+
+  const openTransfer = (profId: string) => {
+    setTransferDocId(profId);
+    // pré-sélectionne l'année actuellement sélectionnée (sinon l'année active)
+    setTransferYearId(selectedYearId || activeAnneeId || "");
+    setTransferErr("");
+    setShowTransfer(true);
+  };
+
+  const doTransfer = async () => {
+    if (!transferDocId) return;
+    if (!transferYearId) {
+      setTransferErr("Choisissez une année scolaire.");
+      return;
+    }
+    setTransferBusy(true);
+    setTransferErr("");
+    try {
+      const ref = doc(db, "affectations_professeurs", `${transferYearId}__${transferDocId}`);
+      const old = await getDoc(ref);
+
+      // ⚠️ Par défaut on crée l’affectation vide (même logique qu’avant)
+      await setDoc(
+        ref,
+        {
+          annee_id: transferYearId,
+          prof_doc_id: transferDocId,
+          classes: [], // si tu veux copier les classes d'une année source, voir le commentaire ci-dessous
+          updatedAt: serverTimestamp(),
+          ...(old.exists() ? {} : { createdAt: serverTimestamp() }),
+        },
+        { merge: true }
+      );
+
+      /* 
+      // 👉 Variante si tu veux COPIER les classes depuis l'année actuellement sélectionnée :
+      // const src = await getDoc(doc(db, "affectations_professeurs", `${selectedYearId}__${transferDocId}`));
+      // const classesToCopy = src.exists() ? (src.data()?.classes || []) : [];
+      // await setDoc(ref, { ...ci-dessus, classes: classesToCopy }, { merge: true });
+      */
+
+      setShowTransfer(false);
+      setTransferDocId(null);
+      ok("Professeur transféré.");
+      await fetchProfsForYear(selectedYearId, selectedYearLabel);
+    } catch (e) {
+      console.error(e);
+      setTransferErr("Transfert impossible.");
+    } finally {
+      setTransferBusy(false);
+    }
+  };
+
+
+
   /* ---------------------- Render ----------------------------------- */
   return (
     <div className="container-fluid py-3">
@@ -565,7 +923,10 @@ export default function ProfessorsPage() {
       <div className="d-flex justify-content-between align-items-center mb-3">
         <div>
           <h3 className="mb-1">Professeurs</h3>
-          <div className="text-muted">Gestion des comptes et affectations par année scolaire.</div>
+          <div className="text-muted">
+            Gestion des comptes et affectations —{" "}
+            <span className="badge bg-light text-dark">Année : {selectedYearLabel || "—"}</span>
+          </div>
         </div>
         <div className="d-flex gap-2">
           <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
@@ -581,7 +942,7 @@ export default function ProfessorsPage() {
           <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
             <h5 className="mb-0 fw-semibold">
               <i className="bi bi-people me-2" />
-              Liste des professeurs
+              Liste des professeurs {selectedYearLabel ? `— ${selectedYearLabel}` : ""}
             </h5>
             <div className="d-flex gap-2 align-items-center">
               <div className="input-group input-group-sm" style={{ minWidth: 320 }}>
@@ -593,7 +954,9 @@ export default function ProfessorsPage() {
                   placeholder="Rechercher (nom, prénom, spécialité)…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
                 />
                 <button className="btn btn-primary" type="button" title="Rechercher">
                   <i className="bi bi-search me-1" /> Rechercher
@@ -614,7 +977,7 @@ export default function ProfessorsPage() {
           ) : filtered.length === 0 ? (
             <div className="text-center py-5 text-muted">
               <i className="bi bi-person-exclamation" style={{ fontSize: 32 }} />
-              <div className="mt-2">Aucun professeur ne correspond à votre recherche.</div>
+              <div className="mt-2">Aucun professeur pour l’année {selectedYearLabel || "—"}.</div>
             </div>
           ) : (
             <>
@@ -625,7 +988,7 @@ export default function ProfessorsPage() {
                       <th className="text-nowrap">Nom</th>
                       <th className="text-nowrap">Prénom</th>
                       <th className="text-nowrap">Spécialité</th>
-                      <th className="text-end text-nowrap" style={{ width: 320 }}>
+                      <th className="text-end text-nowrap" style={{ width: 520 }}>
                         Actions
                       </th>
                     </tr>
@@ -637,7 +1000,9 @@ export default function ProfessorsPage() {
                         <td>{u.prenom}</td>
                         <td>
                           {u.specialite ? (
-                            <span className="badge bg-secondary-subtle text-secondary-emphasis">{u.specialite}</span>
+                            <span className="badge bg-secondary-subtle text-secondary-emphasis">
+                              {u.specialite}
+                            </span>
                           ) : (
                             <span className="text-muted">—</span>
                           )}
@@ -661,12 +1026,35 @@ export default function ProfessorsPage() {
                               </button>
                               <button
                                 className="btn btn-sm btn-outline-danger"
-                                title="Supprimer"
+                                title="Supprimer (définitif)"
                                 onClick={() => askDelete(u.docId)}
                               >
                                 <i className="bi bi-trash" />
                               </button>
                             </div>
+
+                            {/* 🔁 Transférer vers l’année sélectionnée */}
+                            <button
+                              className="btn btn-sm btn-outline-warning me-2"
+                              title={`Transférer vers ${selectedYearLabel || "l’année sélectionnée"}`}
+                              onClick={() => openTransfer(u.docId)}
+                            >
+                              <i className="bi bi-arrow-left-right me-1" />
+                              Transférer
+                            </button>
+
+                            {/* ➖ Retirer de l’année sélectionnée */}
+                            <button
+                              className="btn btn-sm btn-outline-danger me-2"
+                              title={`Retirer de ${selectedYearLabel || "l’année sélectionnée"}`}
+                              onClick={() => removeProfessorFromSelectedYear(u.docId)}
+                              disabled={!selectedYearId || removingFromYear}
+                            >
+                              <i className="bi bi-person-dash me-1" />
+                              Retirer (année)
+                            </button>
+
+                            {/* Assigner */}
                             <button className="btn btn-sm btn-primary" onClick={() => openAssign(u.docId)}>
                               <i className="bi bi-diagram-3 me-1" />
                               Assigner
@@ -717,7 +1105,7 @@ export default function ProfessorsPage() {
             onClose={() => setShowCreate(false)}
             onSaved={async () => {
               setShowCreate(false);
-              await fetchProfs();
+              await fetchProfsForYear(selectedYearId, selectedYearLabel);
             }}
           />
           <div className="modal-backdrop fade show" onClick={() => setShowCreate(false)} />
@@ -734,7 +1122,7 @@ export default function ProfessorsPage() {
             onClose={() => setEditDocId(null)}
             onSaved={async () => {
               setEditDocId(null);
-              await fetchProfs();
+              await fetchProfsForYear(selectedYearId, selectedYearLabel);
             }}
           />
           <div className="modal-backdrop fade show" onClick={() => setEditDocId(null)} />
@@ -765,52 +1153,115 @@ export default function ProfessorsPage() {
                     <div className="alert alert-warning">Professeur introuvable.</div>
                   ) : (
                     <>
-                      <h6 className="fw-bold">Informations de base</h6><hr className="mt-1"/>
+                      <h6 className="fw-bold">Informations de base</h6>
+                      <hr className="mt-1" />
                       <div className="row small">
-                        <div className="col-md-3"><strong>Nom & Prénom</strong><div>{details.nom} {details.prenom}</div></div>
-                        <div className="col-md-3"><strong>Email</strong><div>{details.email || "—"}</div></div>
-                        <div className="col-md-3"><strong>Téléphone</strong><div>{details.telephone || "—"}</div></div>
-                        <div className="col-md-3"><strong>Login</strong><div>{details.login || "—"}</div></div>
-                        <div className="col-md-3"><strong>Rôle</strong><div>{details.role_libelle || "—"}</div></div>
-                        <div className="col-md-3"><strong>Spécialité</strong><div>{details.specialite || "—"}</div></div>
-                        <div className="col-md-6"><strong>Adresse</strong><div>{details.adresse || "—"}</div></div>
+                        <div className="col-md-3">
+                          <strong>Nom & Prénom</strong>
+                          <div>
+                            {details.nom} {details.prenom}
+                          </div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Email</strong>
+                          <div>{details.email || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Téléphone</strong>
+                          <div>{details.telephone || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Login</strong>
+                          <div>{details.login || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Rôle</strong>
+                          <div>{details.role_libelle || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Spécialité</strong>
+                          <div>{details.specialite || "—"}</div>
+                        </div>
+                        <div className="col-md-6">
+                          <strong>Adresse</strong>
+                          <div>{details.adresse || "—"}</div>
+                        </div>
                         {details.specialite_detaillee && (
-                          <div className="col-12"><strong>Spécialité détaillée</strong><div>{details.specialite_detaillee}</div></div>
+                          <div className="col-12">
+                            <strong>Spécialité détaillée</strong>
+                            <div>{details.specialite_detaillee}</div>
+                          </div>
                         )}
                       </div>
 
-                      <h6 className="fw-bold mt-3">Identité</h6><hr className="mt-1"/>
+                      <h6 className="fw-bold mt-3">Identité</h6>
+                      <hr className="mt-1" />
                       <div className="row small">
-                        <div className="col-md-3"><strong>Sexe</strong><div>{details.sexe || "—"}</div></div>
-                        <div className="col-md-3"><strong>Date de naissance</strong><div>{details.date_naissance || "—"}</div></div>
-                        <div className="col-md-3"><strong>Lieu de naissance</strong><div>{details.lieu_naissance || "—"}</div></div>
-                        <div className="col-md-3"><strong>Nationalité</strong><div>{details.nationalite || "—"}</div></div>
-                        <div className="col-md-3"><strong>Situation matrimoniale</strong><div>{details.situation_matrimoniale || "—"}</div></div>
-                        <div className="col-md-3"><strong>CNI / Passeport</strong><div>{details.cni_passeport || "—"}</div></div>
+                        <div className="col-md-3">
+                          <strong>Sexe</strong>
+                          <div>{details.sexe || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Date de naissance</strong>
+                          <div>{details.date_naissance || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Lieu de naissance</strong>
+                          <div>{details.lieu_naissance || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Nationalité</strong>
+                          <div>{details.nationalite || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>Situation matrimoniale</strong>
+                          <div>{details.situation_matrimoniale || "—"}</div>
+                        </div>
+                        <div className="col-md-3">
+                          <strong>CNI / Passeport</strong>
+                          <div>{details.cni_passeport || "—"}</div>
+                        </div>
                       </div>
 
-                      <h6 className="fw-bold mt-3">Statut & Fonction</h6><hr className="mt-1"/>
+                      <h6 className="fw-bold mt-3">Statut & Fonction</h6>
+                      <hr className="mt-1" />
                       <div className="row small">
-                        <div className="col-md-3"><strong>Statut</strong><div>{details.statut || "—"}</div></div>
-                        <div className="col-md-9"><strong>Fonction principale</strong><div>{details.fonction_principale || "—"}</div></div>
+                        <div className="col-md-3">
+                          <strong>Statut</strong>
+                          <div>{details.statut || "—"}</div>
+                        </div>
+                        <div className="col-md-9">
+                          <strong>Fonction principale</strong>
+                          <div>{details.fonction_principale || "—"}</div>
+                        </div>
                       </div>
 
-                      <h6 className="fw-bold mt-3">Disponibilités</h6><hr className="mt-1"/>
+                      <h6 className="fw-bold mt-3">Disponibilités</h6>
+                      <hr className="mt-1" />
                       <div className="small">
                         {details.disponibilites?.length ? (
                           <ul className="mb-2">
                             {details.disponibilites.map((d, i) => (
-                              <li key={i}>{d.jour} — {d.debut} → {d.fin}</li>
+                              <li key={i}>
+                                {d.jour} — {d.debut} → {d.fin}
+                              </li>
                             ))}
                           </ul>
-                        ) : "—"}
+                        ) : (
+                          "—"
+                        )}
                       </div>
 
-                      <h6 className="fw-bold mt-3">Éléments constitutifs & Expérience</h6><hr className="mt-1"/>
+                      <h6 className="fw-bold mt-3">Éléments constitutifs & Expérience</h6>
+                      <hr className="mt-1" />
                       <div className="row small">
                         <div className="col-md-6">
                           <strong>Éléments constitutifs</strong>
-                          <div>{details.elements_constitutifs?.length ? details.elements_constitutifs.join(", ") : "—"}</div>
+                          <div>
+                            {details.elements_constitutifs?.length
+                              ? details.elements_constitutifs.join(", ")
+                              : "—"}
+                          </div>
                         </div>
                         <div className="col-md-6">
                           <strong>Exp. enseignement</strong>
@@ -821,44 +1272,101 @@ export default function ProfessorsPage() {
                         </div>
                       </div>
 
-                      <h6 className="fw-bold mt-3">Diplômes</h6><hr className="mt-1"/>
+                      <h6 className="fw-bold mt-3">Diplômes</h6>
+                      <hr className="mt-1" />
                       <div className="small">
                         {details.diplomes?.length ? (
                           <ul className="mb-2">
                             {details.diplomes.map((d, i) => (
-                              <li key={i}><b>{d.intitule}</b> — {d.niveau} — {d.annee} — {d.etablissement}</li>
+                              <li key={i}>
+                                <b>{d.intitule}</b> — {d.niveau} — {d.annee} — {d.etablissement}
+                              </li>
                             ))}
                           </ul>
-                        ) : "—"}
+                        ) : (
+                          "—"
+                        )}
                       </div>
 
-                      <h6 className="fw-bold mt-3">Niveaux & Compétences</h6><hr className="mt-1"/>
+                      <h6 className="fw-bold mt-3">Niveaux & Compétences</h6>
+                      <hr className="mt-1" />
                       <div className="row small">
                         <div className="col-md-4">
                           <strong>Niveaux enseignement</strong>
-                          <div>{details.niveaux_enseignement?.length ? details.niveaux_enseignement.join(", ") : "—"}</div>
+                          <div>
+                            {details.niveaux_enseignement?.length
+                              ? details.niveaux_enseignement.join(", ")
+                              : "—"}
+                          </div>
                         </div>
                         <div className="col-md-4">
                           <strong>Outils</strong>
-                          <div>{details.competences?.outils?.length ? details.competences.outils.join(", ") : "—"}</div>
+                          <div>
+                            {details.competences?.outils?.length ? details.competences.outils.join(", ") : "—"}
+                          </div>
                         </div>
                         <div className="col-md-4">
                           <strong>Langues</strong>
-                          <div>{details.competences?.langues?.length ? details.competences.langues.join(", ") : "—"}</div>
+                          <div>
+                            {details.competences?.langues?.length ? details.competences.langues.join(", ") : "—"}
+                          </div>
                         </div>
                         <div className="col-12 mt-2">
                           <strong>Publications</strong>
-                          <div className="small">{details.competences?.publications?.length ? details.competences.publications.join(", ") : "—"}</div>
+                          <div className="small">
+                            {details.competences?.publications?.length
+                              ? details.competences.publications.join(", ")
+                              : "—"}
+                          </div>
                         </div>
                       </div>
 
-                      <h6 className="fw-bold mt-3">Documents & RIB</h6><hr className="mt-1"/>
+                      <h6 className="fw-bold mt-3">Documents & RIB</h6>
+                      <hr className="mt-1" />
                       <div className="small">
-                        <div>CV : {details.documents?.cv ? <a href={details.documents.cv} target="_blank" rel="noreferrer">Ouvrir</a> : "—"}</div>
-                        <div>Diplômes : {details.documents?.diplomes ? <a href={details.documents.diplomes} target="_blank" rel="noreferrer">Ouvrir</a> : "—"}</div>
-                        <div>Pièce d’identité : {details.documents?.piece_identite ? <a href={details.documents.piece_identite} target="_blank" rel="noreferrer">Ouvrir</a> : "—"}</div>
-                        <div>RIB : {details.documents?.rib ? <a href={details.documents.rib} target="_blank" rel="noreferrer">Ouvrir</a> : "—"}</div>
-                        <div className="mt-2"><strong>RIB (texte)</strong> : {details.rib || "—"}</div>
+                        <div>
+                          CV :{" "}
+                          {details.documents?.cv ? (
+                            <a href={details.documents.cv} target="_blank" rel="noreferrer">
+                              Ouvrir
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+                        <div>
+                          Diplômes :{" "}
+                          {details.documents?.diplomes ? (
+                            <a href={details.documents.diplomes} target="_blank" rel="noreferrer">
+                              Ouvrir
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+                        <div>
+                          Pièce d’identité :{" "}
+                          {details.documents?.piece_identite ? (
+                            <a href={details.documents.piece_identite} target="_blank" rel="noreferrer">
+                              Ouvrir
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+                        <div>
+                          RIB :{" "}
+                          {details.documents?.rib ? (
+                            <a href={details.documents.rib} target="_blank" rel="noreferrer">
+                              Ouvrir
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
+                        <div className="mt-2">
+                          <strong>RIB (texte)</strong> : {details.rib || "—"}
+                        </div>
                       </div>
                     </>
                   )}
@@ -873,39 +1381,6 @@ export default function ProfessorsPage() {
             </div>
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowDetails(false)} />
-        </>
-      )}
-
-      {/* Supprimer (danger) */}
-      {showDelete && (
-        <>
-          <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
-            <div className="modal-dialog modal-md modal-dialog-centered">
-              <div className="modal-content border-0" style={{ boxShadow: "0 0 0 2px rgba(220,53,69,.25)" }}>
-                <div className="modal-header bg-danger text-white">
-                  <h5 className="modal-title">
-                    <i className="bi bi-exclamation-triangle me-2" />
-                    Suppression définitive
-                  </h5>
-                  <button type="button" className="btn-close btn-close-white" onClick={() => setShowDelete(false)} />
-                </div>
-                <div className="modal-body">
-                  <p className="mb-2">Cette action est <b>dangereuse</b>, <b>définitive</b> et <b>irréversible</b>.</p>
-                  <p className="mb-0">Les données de ce professeur seront supprimées.</p>
-                  {deleteError && <div className="alert alert-danger mt-3 mb-0">{deleteError}</div>}
-                </div>
-                <div className="modal-footer">
-                  <button className="btn btn-outline-secondary" onClick={() => setShowDelete(false)} disabled={deleting}>
-                    Annuler
-                  </button>
-                  <button className="btn btn-danger" onClick={doDelete} disabled={deleting}>
-                    {deleting ? (<><span className="spinner-border spinner-border-sm me-2" />Suppression…</>) : "Supprimer"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="modal-backdrop fade show" onClick={() => setShowDelete(false)} />
         </>
       )}
 
@@ -926,16 +1401,31 @@ export default function ProfessorsPage() {
                   {assignErr && <div className="alert alert-danger">{assignErr}</div>}
                   {assignOk && <div className="alert alert-success">{assignOk}</div>}
 
-                  {/* Année */}
+                  {/* Année de travail de la modale */}
                   <div className="mb-3">
                     <label className="form-label">Année scolaire</label>
-                    <select className="form-select" value={anneeId} onChange={(e) => setAnneeId(e.target.value)}>
-                      {annees.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.libelle} {a.active ? "(en cours)" : ""}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="d-flex gap-2">
+                      <select
+                        className="form-select"
+                        style={{ maxWidth: 360 }}
+                        value={anneeId}
+                        onChange={async (e) => {
+                          const y = e.target.value;
+                          setAnneeId(y);
+                          if (assignForDocId) {
+                            await loadAssignFor(y, assignForDocId);
+                          }
+                          setEditingClasseId(null);
+                          setDraft({ matieres_ids: [] });
+                        }}
+                      >
+                        {annees.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.libelle} {a.active ? "(en cours)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   {/* Sélecteurs en cascade */}
@@ -947,7 +1437,12 @@ export default function ProfessorsPage() {
                         value={draft.section || ""}
                         onChange={(e) => {
                           const s = (e.target.value || "") as SectionKey | "";
-                          setDraft({ section: (s || undefined) as SectionKey | undefined, filiere_id: undefined, classe_id: undefined, matieres_ids: [] });
+                          setDraft({
+                            section: (s || undefined) as SectionKey | undefined,
+                            filiere_id: undefined,
+                            classe_id: undefined,
+                            matieres_ids: [],
+                          });
                         }}
                       >
                         <option value="">—</option>
@@ -963,12 +1458,17 @@ export default function ProfessorsPage() {
                         value={draft.filiere_id || ""}
                         onChange={(e) => {
                           const fid = e.target.value || "";
-                          setDraft((d) => ({ ...d, filiere_id: fid || undefined, classe_id: undefined, matieres_ids: [] }));
+                          setDraft((d) => ({
+                            ...d,
+                            filiere_id: fid || undefined,
+                            classe_id: undefined,
+                            matieres_ids: [],
+                          }));
                         }}
                         disabled={!draft.section}
                       >
                         <option value="">—</option>
-                        {filieres
+                        {filieresYear
                           .filter((f) => f.section === draft.section)
                           .map((f) => (
                             <option key={f.id} value={f.id}>
@@ -990,7 +1490,7 @@ export default function ProfessorsPage() {
                         disabled={!draft.filiere_id}
                       >
                         <option value="">—</option>
-                        {(draft.filiere_id ? (classesByFiliere[draft.filiere_id] || []) : []).map((c) => (
+                        {(draft.filiere_id ? classesByFiliereYear[draft.filiere_id] || [] : []).map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.libelle}
                           </option>
@@ -1004,7 +1504,7 @@ export default function ProfessorsPage() {
                     <div className="mt-3">
                       <div className="text-muted small mb-1">Matières de la classe</div>
                       <div className="row">
-                        {(matieresByClass[draft.classe_id] || []).map((m) => {
+                        {(matieresByClassYear[draft.classe_id] || []).map((m) => {
                           const checked = draft.matieres_ids.includes(m.id);
                           return (
                             <div key={m.id} className="col-6 col-lg-4">
@@ -1018,23 +1518,65 @@ export default function ProfessorsPage() {
                                     const on = e.target.checked;
                                     setDraft((d) => {
                                       const set = new Set(d.matieres_ids);
-                                      if (on) set.add(m.id); else set.delete(m.id);
+                                      if (on) set.add(m.id);
+                                      else set.delete(m.id);
                                       return { ...d, matieres_ids: Array.from(set) };
                                     });
                                   }}
                                 />
-                                <label className="form-check-label" htmlFor={`mat-${m.id}`}>{m.libelle}</label>
+                                <label className="form-check-label" htmlFor={`mat-${m.id}`}>
+                                  {m.libelle}
+                                </label>
                               </div>
                             </div>
                           );
                         })}
                       </div>
 
-                      <div className="mt-3">
-                        <button className="btn btn-outline-primary" onClick={addDraft}>
-                          <i className="bi bi-plus-lg me-1" />
-                          Ajouter cette affectation à la liste
-                        </button>
+                      <div className="mt-3 d-flex gap-2">
+                        {!editingClasseId ? (
+                          <button className="btn btn-outline-primary" onClick={addDraft}>
+                            <i className="bi bi-plus-lg me-1" />
+                            Ajouter cette affectation à la liste
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => {
+                                setAssignErr("");
+                                if (!draft.section || !draft.filiere_id || !draft.classe_id) {
+                                  return setAssignErr("Section, filière et classe sont requis.");
+                                }
+                                setDraftList((prev) =>
+                                  prev.map((x) =>
+                                    x.classe_id === editingClasseId
+                                      ? {
+                                          section: draft.section!,
+                                          filiere_id: draft.filiere_id!,
+                                          classe_id: draft.classe_id!,
+                                          matieres_ids: [...(draft.matieres_ids || [])],
+                                        }
+                                      : x
+                                  )
+                                );
+                                setEditingClasseId(null);
+                                setDraft({ matieres_ids: [] });
+                              }}
+                            >
+                              <i className="bi bi-check2 me-1" /> Mettre à jour
+                            </button>
+                            <button
+                              className="btn btn-outline-secondary"
+                              onClick={() => {
+                                setEditingClasseId(null);
+                                setDraft({ matieres_ids: [] });
+                              }}
+                            >
+                              Annuler
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1053,14 +1595,16 @@ export default function ProfessorsPage() {
                             <th>Filière</th>
                             <th>Classe</th>
                             <th>Matières</th>
-                            <th className="text-end" style={{ width: 80 }}>Actions</th>
+                            <th className="text-end" style={{ width: 140 }}>
+                              Actions
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
                           {draftList.map((it) => {
-                            const f = filiereById[it.filiere_id];
-                            const c = classes.find((x) => x.id === it.classe_id);
-                            const mats = (matieresByClass[it.classe_id] || []) as TMatiere[];
+                            const f = filiereByIdYear[it.filiere_id];
+                            const c = classesYear.find((x) => x.id === it.classe_id);
+                            const mats = (matieresByClassYear[it.classe_id] || []) as TMatiere[];
                             const labels = it.matieres_ids
                               .map((id) => mats.find((m) => m.id === id)?.libelle)
                               .filter(Boolean)
@@ -1072,9 +1616,37 @@ export default function ProfessorsPage() {
                                 <td>{c?.libelle || it.classe_id}</td>
                                 <td>{labels || <span className="text-muted">—</span>}</td>
                                 <td className="text-end">
-                                  <button className="btn btn-outline-danger btn-sm" onClick={() => removeDraft(it.classe_id)}>
-                                    <i className="bi bi-x-lg" />
-                                  </button>
+                                  <div className="btn-group btn-group-sm">
+                                    <button
+                                      className="btn btn-outline-secondary"
+                                      title="Modifier"
+                                      onClick={() => {
+                                        setAssignErr("");
+                                        setEditingClasseId(it.classe_id);
+                                        setDraft({
+                                          section: it.section,
+                                          filiere_id: it.filiere_id,
+                                          classe_id: it.classe_id,
+                                          matieres_ids: [...it.matieres_ids],
+                                        });
+                                      }}
+                                    >
+                                      <i className="bi bi-pencil" />
+                                    </button>
+                                    <button
+                                      className="btn btn-outline-danger"
+                                      title="Supprimer"
+                                      onClick={() => {
+                                        if (editingClasseId === it.classe_id) {
+                                          setEditingClasseId(null);
+                                          setDraft({ matieres_ids: [] });
+                                        }
+                                        removeDraft(it.classe_id);
+                                      }}
+                                    >
+                                      <i className="bi bi-x-lg" />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -1089,7 +1661,14 @@ export default function ProfessorsPage() {
                     Fermer
                   </button>
                   <button className="btn btn-primary" onClick={saveAssign} disabled={assignBusy}>
-                    {assignBusy ? (<><span className="spinner-border spinner-border-sm me-2" />Enregistrement…</>) : "Enregistrer l’affectation"}
+                    {assignBusy ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" />
+                        Enregistrement…
+                      </>
+                    ) : (
+                      "Enregistrer l’affectation"
+                    )}
                   </button>
                 </div>
               </div>
@@ -1098,6 +1677,114 @@ export default function ProfessorsPage() {
           <div className="modal-backdrop fade show" onClick={() => setShowAssign(false)} />
         </>
       )}
+
+      {/* Supprimer — modale DANGER (définitif, toutes années) */}
+      {showDelete && (
+        <>
+          <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content border-danger">
+                <div className="modal-header bg-danger text-white">
+                  <h5 className="modal-title">
+                    <i className="bi bi-exclamation-triangle me-2" />
+                    Supprimer le compte professeur
+                  </h5>
+                  <button
+                    type="button"
+                    className="btn-close btn-close-white"
+                    aria-label="Close"
+                    onClick={() => setShowDelete(false)}
+                  />
+                </div>
+
+                <div className="modal-body">
+                  {deleteError && <div className="alert alert-danger mb-3">{deleteError}</div>}
+                  <p className="mb-2">
+                    Vous êtes sur le point de <strong>supprimer définitivement</strong> le compte du professeur{" "}
+                    <strong>{deleteTarget?.prenom} {deleteTarget?.nom}</strong>.
+                  </p>
+                  <p className="mb-0">Cette action est irréversible et le retirera de <em>toutes</em> les années.</p>
+                </div>
+
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setShowDelete(false)} disabled={deleting}>
+                    Annuler
+                  </button>
+                  <button className="btn btn-danger" onClick={doDelete} disabled={deleting}>
+                    {deleting ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" />
+                        Suppression…
+                      </>
+                    ) : (
+                      "Supprimer définitivement"
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={() => setShowDelete(false)} />
+        </>
+      )}
+
+      {showTransfer && (
+        <>
+          <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">
+                    <i className="bi bi-arrow-left-right me-2" />
+                    Transférer le professeur vers une année
+                  </h5>
+                  <button type="button" className="btn-close" onClick={() => setShowTransfer(false)} />
+                </div>
+
+                <div className="modal-body">
+                  {transferErr && <div className="alert alert-danger">{transferErr}</div>}
+
+                  <label className="form-label">Année scolaire destination</label>
+                  <select
+                    className="form-select"
+                    value={transferYearId}
+                    onChange={(e) => setTransferYearId(e.target.value)}
+                  >
+                    <option value="">— choisir —</option>
+                    {annees.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.libelle} {a.active ? "(en cours)" : ""}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="form-text mt-2">
+                    Le transfert crée (ou met à jour) l’affectation du professeur sur l’année choisie.
+                  </div>
+                </div>
+
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setShowTransfer(false)} disabled={transferBusy}>
+                    Annuler
+                  </button>
+                  <button className="btn btn-primary" onClick={doTransfer} disabled={transferBusy || !transferYearId}>
+                    {transferBusy ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" />
+                        Transfert…
+                      </>
+                    ) : (
+                      "Transférer"
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={() => setShowTransfer(false)} />
+        </>
+      )}
+
 
       {/* Toasts */}
       <Toast message={toast} type="success" show={okShow} onClose={() => setOkShow(false)} />
