@@ -7,12 +7,23 @@ import {
   getDocs,
   query,
   where,
+  doc,
+  getDoc,
+  addDoc,
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
 import { useAcademicYear } from "../context/AcademicYearContext";
 import Toast from "../../admin/components/ui/Toast";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+
+import {
+  evaluateNeutralization,
+  TClosureRule,
+  TSessionOverride,
+  startOfDay as calStartOfDay,
+  endOfDay as calEndOfDay,
+} from "../lib/calendarRules";
 
 /* ========================= Types ========================= */
 
@@ -77,22 +88,21 @@ type TUser = {
 type AbsenceEntry = {
   type: "absence";
   timestamp?: any;
-  annee: string;               // libellé "2024-2025" (dans tes objets)
+  annee: string;               // libellé "2024-2025"
   semestre: TSemestre;
   start: string;
   end: string;
   salle?: string;
   enseignant?: string;
-  matiereId?: string;          // présent dans tes exemples
-  matiere_id?: string;         // fallback
+  matiereId?: string;
+  matiere_id?: string;
   matiere_libelle: string;
   matricule: string;
   nom_complet: string;
 };
 
 type SeanceDoc = {
-  // métadonnées au root de chaque doc emargements
-  annee: string;               // id année (clé)
+  annee: string;               // id année
   class_id: string;
   class_libelle: string;
   semestre: TSemestre;
@@ -105,6 +115,18 @@ type SeanceDoc = {
   matiere_id: string;
   matiere_libelle: string;
   // + champs dynamiques: "<matricule>": AbsenceEntry[]
+};
+
+type TMakeup = {
+  id: string;
+  class_id: string;
+  matiere_id: string;
+  matiere_libelle?: string;
+  date: Date;
+  start: string;
+  end: string;
+  salle?: string;
+  enseignant?: string;
 };
 
 /* ========================= Helpers ========================= */
@@ -127,7 +149,7 @@ function dayOfWeekLundi1(date: Date): number {
   return ((js + 6) % 7) + 1; // 1..7
 }
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+const endOfDay   = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
 const formatFR = (hhmm: string) => {
   const [hh, mm] = hhmm.split(":");
@@ -164,6 +186,9 @@ export default function EmargementsPage() {
 
   const [classes, setClasses] = useState<TClasse[]>([]);
   const [openedClasse, setOpenedClasse] = useState<TClasse | null>(null);
+
+  // Modal fermeture (optionnel, laissé vide ici)
+  const [showClosure, setShowClosure] = useState(false);
 
   // Toasts globaux
   const [toastMsg, setToastMsg] = useState("");
@@ -277,9 +302,14 @@ export default function EmargementsPage() {
         <main className="col-12 col-md-9 col-lg-10">
           <div className="d-flex align-items-center justify-content-between mb-3">
             <h5 className="mb-0">{selectedFiliere ? `Filière — ${selectedFiliere.libelle}` : "Filière"}</h5>
-            <button className="btn btn-outline-secondary btn-sm" onClick={() => setSelectedFiliere((f) => (f ? { ...f } : f))}>
-              Actualiser vue
-            </button>
+            <div className="d-flex gap-2">
+              <button className="btn btn-outline-secondary btn-sm" onClick={() => setSelectedFiliere((f) => (f ? { ...f } : f))}>
+                Actualiser vue
+              </button>
+              <button className="btn btn-outline-danger btn-sm" onClick={() => setShowClosure(true)}>
+                <i className="bi bi-slash-circle me-1" /> Pas de cours (fermeture)
+              </button>
+            </div>
           </div>
 
           {/* CLASSES */}
@@ -323,6 +353,30 @@ export default function EmargementsPage() {
       {/* toasts */}
       <Toast message={toastMsg} type="success" show={okShow} onClose={() => setOkShow(false)} />
       <Toast message={toastMsg} type="error" show={errShow} onClose={() => setErrShow(false)} />
+
+      {/* (squelette du modal Fermeture laissé vide exprès ici) */}
+      {showClosure && (
+        <>
+          <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-lg modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title"><i className="bi bi-slash-circle me-2" />Déclarer une fermeture (pas de cours)</h5>
+                  <button className="btn-close" onClick={()=>setShowClosure(false)} />
+                </div>
+                <div className="modal-body">
+                  {/* À brancher si tu veux persister dans years/{yearId}/closures */}
+                  <div className="text-muted">À implémenter : formulaire de période + portée.</div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={()=>setShowClosure(false)}>Fermer</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={()=>setShowClosure(false)} />
+        </>
+      )}
     </div>
   );
 }
@@ -363,7 +417,7 @@ function ClasseView({ classe, onBack }: { classe: TClasse; onBack: () => void })
   );
 }
 
-/* ========================= Séances ➜ liste uniquement des absents ========================= */
+/* ========================= Séances ➜ absents + rattrapages ========================= */
 
 function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
   classe: TClasse; yearId: string; yearLabel: string;
@@ -385,17 +439,45 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
   const [absents, setAbsents] = useState<Array<{matricule:string; nom:string; email?:string; telephone?:string; entries:AbsenceEntry[];}>>([]);
   const [exportBusy, setExportBusy] = useState(false);
 
+  // Métadonnées année + neutralisations
+  const [yearMeta, setYearMeta] = useState<{start?:Date; end?:Date}>({});
+  const [closures, setClosures] = useState<TClosureRule[]>([]);
+  const [overrides, setOverrides] = useState<TSessionOverride[]>([]);
+  const [makeups, setMakeups] = useState<TMakeup[]>([]);
+
   const dayNumber = useMemo(() => {
     const d = fromISODate(dateStr);
     return dayOfWeekLundi1(d); // 1..7
   }, [dateStr]);
 
-  const sessionsOfTheDay = useMemo(() => {
-    if (dayNumber === 7) return [] as TEDTSlot[];
+  const baseSessionsOfTheDay = useMemo(() => {
+    if (dayNumber === 7) return [] as TEDTSlot[]; // dimanche
     return [...slots.filter((s) => s.day === dayNumber)].sort(
       (a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end)
     );
   }, [slots, dayNumber]);
+
+  // combine EDT + rattrapages du jour
+  const combinedSessions = useMemo(() => {
+    const edt = baseSessionsOfTheDay.map(s => ({ source: "edt" as const, slot: s }));
+    const mk  = makeups
+      .filter(m => toISODate(m.date) === dateStr)
+      .map(m => ({
+        source: "makeup" as const,
+        slot: {
+          day: dayNumber,
+          matiere_id: m.matiere_id,
+          matiere_libelle: m.matiere_libelle || "",
+          start: m.start,
+          end: m.end,
+          salle: m.salle || "",
+          enseignant: m.enseignant || "",
+        } as TEDTSlot,
+      }));
+    return [...edt, ...mk].sort(
+      (a, b) => a.slot.start.localeCompare(b.slot.start) || a.slot.end.localeCompare(b.slot.end)
+    );
+  }, [baseSessionsOfTheDay, makeups, dayNumber, dateStr]);
 
   /* ====== Charger matières + EDT ====== */
   useEffect(() => {
@@ -440,6 +522,131 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classe.id, classe.academic_year_id, semestre, yearId]);
 
+  /* ====== Métadonnées année ====== */
+  useEffect(() => {
+    const loadYearMeta = async () => {
+      if (!yearId) return setYearMeta({});
+      const yref = doc(db, "annees_scolaires", yearId);
+      const ydoc = await getDoc(yref);
+      if (ydoc.exists()) {
+        const v = ydoc.data() as any;
+        const sd = v.date_debut?.toDate?.() ?? null;
+        const ed = v.date_fin?.toDate?.() ?? null;
+        setYearMeta({ start: sd || undefined, end: ed || undefined });
+      } else {
+        setYearMeta({});
+      }
+    };
+    loadYearMeta();
+  }, [yearId]);
+
+  /* ====== Closures (fermetures) ====== */
+  useEffect(() => {
+    const loadClosures = async () => {
+      try {
+        const arr: TClosureRule[] = [];
+        const snap = await getDocs(collection(db, `years/${yearId}/closures`));
+        snap.forEach((d) => {
+          const v = d.data() as any;
+          arr.push({
+            id: d.id,
+            scope: v.scope,
+            filiere_id: v.filiere_id,
+            class_id: v.class_id,
+            matiere_id: v.matiere_id,
+            start: (v.start?.toDate?.() ?? v.start) as Date,
+            end: (v.end?.toDate?.() ?? v.end) as Date,
+            start_time: v.start_time || undefined,
+            end_time: v.end_time || undefined,
+            label: v.label || undefined,
+          });
+        });
+        setClosures(arr);
+      } catch (e) { console.error(e); setClosures([]); }
+    };
+    if (yearId) loadClosures();
+  }, [yearId]);
+
+  /* ====== Overrides (cancel / reschedule / makeup) ====== */
+  useEffect(() => {
+    const loadOverrides = async () => {
+      try {
+        const arr: TSessionOverride[] = [];
+        const snap = await getDocs(collection(db, `years/${yearId}/session_overrides`));
+        snap.forEach((d) => {
+          const v = d.data() as any;
+          // on transforme les dates Firestore en Date JS
+          const base = {
+            id: d.id,
+            class_id: String(v.class_id),
+            matiere_id: String(v.matiere_id),
+            reason: v.reason,
+          } as any;
+
+          if (v.type === "cancel") {
+            arr.push({
+              ...base,
+              type: "cancel",
+              date: (v.date?.toDate?.() ?? v.date) as Date,
+              start: String(v.start),
+              end: String(v.end),
+            });
+          } else if (v.type === "reschedule") {
+            arr.push({
+              ...base,
+              type: "reschedule",
+              date: (v.date?.toDate?.() ?? v.date) as Date,
+              start: String(v.start),
+              end: String(v.end),
+              new_date: (v.new_date?.toDate?.() ?? v.new_date) as Date,
+              new_start: String(v.new_start),
+              new_end: String(v.new_end),
+            });
+          } else if (v.type === "makeup") {
+            arr.push({
+              ...base,
+              type: "makeup",
+              date: (v.date?.toDate?.() ?? v.date) as Date,
+              start: String(v.start),
+              end: String(v.end),
+              salle: v.salle || undefined,
+              enseignant: v.enseignant || undefined,
+              matiere_libelle: v.matiere_libelle || undefined,
+            } as any);
+          }
+        });
+        setOverrides(arr);
+      } catch (e) { console.error(e); setOverrides([]); }
+    };
+    if (yearId) loadOverrides();
+  }, [yearId]);
+
+  /* ====== Makeups du jour (rattrapages) ======
+     On peut les récupérer depuis overrides (type="makeup") déjà chargés,
+     mais on filtre par date et classe pour ce jour. */
+  useEffect(() => {
+    const d0 = startOfDay(fromISODate(dateStr));
+    const d1 = endOfDay(fromISODate(dateStr));
+    const list: TMakeup[] = overrides
+      .filter(o =>
+        o.type === "makeup" &&
+        o.class_id === classe.id &&
+        (o.date >= d0 && o.date <= d1)
+      )
+      .map((o: any) => ({
+        id: o.id,
+        class_id: o.class_id,
+        matiere_id: o.matiere_id,
+        matiere_libelle: o.matiere_libelle,
+        date: o.date,
+        start: o.start,
+        end: o.end,
+        salle: o.salle,
+        enseignant: o.enseignant,
+      }));
+    setMakeups(list);
+  }, [overrides, classe.id, dateStr]);
+
   /* ====== Charger étudiants de la classe (pour enrichir infos) ====== */
   useEffect(() => {
     const fetchStudents = async () => {
@@ -464,7 +671,6 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
           });
         };
 
-        // mêmes stratégies robustes que EtudiantsPage
         {
           const snap = await getDocs(
             query(collection(db, "users"), where("classe_id", "==", classe.id), where("academic_year_id", "==", classe.academic_year_id))
@@ -488,17 +694,36 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
     fetchStudents();
   }, [classe.id, classe.academic_year_id]);
 
-  /* ====== Quand une séance est sélectionnée ➜ lire absents ====== */
+  /* ===== Statut neutralisation (EDT + makeups) ===== */
+  const sessionsWithStatus = useMemo(() => {
+    const dayDate = startOfDay(fromISODate(dateStr));
+    return combinedSessions.map((obj) => {
+      const res = evaluateNeutralization({
+        date: dayDate,
+        class_id: classe.id,
+        matiere_id: obj.slot.matiere_id,
+        start: obj.slot.start,
+        end: obj.slot.end,
+        closures,
+        overrides,
+        yearStart: yearMeta.start,
+        yearEnd: yearMeta.end,
+      });
+      return { ...obj, neutralized: res.neutralized, reason: res.reason, replaced: res.replaced };
+    });
+  }, [combinedSessions, closures, overrides, yearMeta.start, yearMeta.end, dateStr, classe.id]);
+
+  /* ===== Lecture absents de la séance sélectionnée (ignore si neutralisée) ===== */
   useEffect(() => {
     const run = async () => {
       setAbsents([]);
       if (selectedIndex === null) return;
-      const slot = sessionsOfTheDay[selectedIndex];
-      if (!slot) return;
+      const st = sessionsWithStatus[selectedIndex];
+      if (!st || st.neutralized) return;
 
+      const slot = st.slot;
       try {
         const d = startOfDay(fromISODate(dateStr));
-
         const snap = await getDocs(
           query(
             collection(db, "emargements"),
@@ -519,7 +744,6 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
 
         const rows: Array<{matricule:string; nom:string; email?:string; telephone?:string; entries:AbsenceEntry[]}> = [];
 
-        // Tous les champs array = matricules absents
         for (const k of Object.keys(data)) {
           const val = (data as any)[k];
           if (Array.isArray(val)) {
@@ -541,12 +765,50 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIndex, dateStr, semestre, sessionsOfTheDay.length, students.length]);
+  }, [selectedIndex, dateStr, semestre, sessionsWithStatus.length, students.length]);
 
+  /* ===== Création d’un RATTRAPAGE (makeup) ===== */
+  const [showMakeup, setShowMakeup] = useState(false);
+  const [mkDate, setMkDate]   = useState<string>(() => dateStr);
+  const [mkStart, setMkStart] = useState<string>("");
+  const [mkEnd, setMkEnd]     = useState<string>("");
+  const [mkMat, setMkMat]     = useState<string>("");
+  const [mkSalle, setMkSalle] = useState<string>("");
+  const [mkEns, setMkEns]     = useState<string>("");
+
+  const saveMakeup = async () => {
+    if (!yearId || !mkDate || !mkStart || !mkEnd || !mkMat) return;
+    try {
+      const m = matieres[mkMat];
+      await addDoc(collection(db, `years/${yearId}/session_overrides`), {
+        type: "makeup",
+        class_id: classe.id,
+        matiere_id: mkMat,
+        matiere_libelle: m?.libelle || null,
+        date: startOfDay(fromISODate(mkDate)), // date jour (00:00)
+        start: mkStart,
+        end: mkEnd,
+        salle: mkSalle || null,
+        enseignant: mkEns || m?.assigned_prof_name || null,
+        reason: "Rattrapage",
+        created_at: Date.now(),
+      });
+      setShowMakeup(false);
+      // on force la vue sur la date du rattrapage et on réinitialise la sélection
+      setDateStr(mkDate);
+      setSelectedIndex(null);
+    } catch (e) {
+      console.error(e);
+      // (tu peux brancher un toast local ici si tu veux)
+    }
+  };
+
+  /* ===== Export PDF ===== */
   const exportPDF = () => {
     if (selectedIndex === null) return;
-    const slot = sessionsOfTheDay[selectedIndex];
-    if (!slot) return;
+    const st = sessionsWithStatus[selectedIndex];
+    if (!st || st.neutralized) return;
+    const slot = st.slot;
 
     setExportBusy(true);
     try {
@@ -587,12 +849,14 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
     }
   };
 
+  const selectedStatus = selectedIndex !== null ? sessionsWithStatus[selectedIndex] : null;
+
   return (
     <>
       {/* Filtres séance */}
       <div className="card border-0 shadow-sm">
         <div className="card-body">
-          <div className="row g-3">
+          <div className="row g-3 align-items-end">
             <div className="col-md-3">
               <label className="form-label mb-1">Semestre</label>
               <select
@@ -612,36 +876,58 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
                 value={dateStr}
                 onChange={(e) => { setDateStr(e.target.value); setSelectedIndex(null); }}
               />
-              <div className="form-text">Séances extraites de l’EDT.</div>
+            </div>
+
+            <div className="col-md-6 text-md-end">
+              <button className="btn btn-outline-info btn-sm" onClick={() => {
+                // pré-remplir le form de rattrapage
+                setMkDate(dateStr);
+                setMkStart(""); setMkEnd("");
+                setMkMat(Object.keys(matieres)[0] || "");
+                setMkSalle(""); setMkEns("");
+                setShowMakeup(true);
+              }}>
+                <i className="bi bi-plus-circle me-1" /> Rattraper un cours
+              </button>
             </div>
           </div>
 
           <hr />
 
-          {/* Séances du jour */}
+          {/* Séances du jour = EDT + makeups */}
           <h6 className="mb-2">Séances — {dateStr}</h6>
           {loading ? (
             <div className="text-center py-4"><div className="spinner-border" /></div>
           ) : dayNumber === 7 ? (
             <div className="alert alert-secondary mb-0">Dimanche : aucune séance prévue.</div>
-          ) : sessionsOfTheDay.length === 0 ? (
-            <div className="text-muted">Aucune séance dans l’EDT pour ce jour/semestre.</div>
+          ) : combinedSessions.length === 0 ? (
+            <div className="text-muted">Aucune séance dans l’EDT / rattrapage pour ce jour/semestre.</div>
           ) : (
             <div className="row g-3">
-              {sessionsOfTheDay.map((s, i) => {
-                const mat = matieres[s.matiere_id];
+              {sessionsWithStatus.map(({source, slot, neutralized, reason}, i) => {
+                const mat = matieres[slot.matiere_id];
                 return (
-                  <div className="col-md-4" key={`${s.matiere_id}-${s.start}-${s.end}-${i}`}>
+                  <div className="col-md-4" key={`${source}-${slot.matiere_id}-${slot.start}-${slot.end}-${i}`}>
                     <button
                       className={clsx("card border-2 shadow-sm text-start w-100", selectedIndex === i ? "border-primary" : "border-0")}
-                      onClick={() => setSelectedIndex(i)}
+                      onClick={() => !neutralized && setSelectedIndex(i)}
+                      disabled={neutralized}
+                      title={neutralized ? (reason || "Neutralisée") : "Ouvrir"}
                     >
                       <div className="card-body">
-                        <div className="fw-semibold mb-1">{mat?.libelle || s.matiere_libelle || "Matière"}</div>
-                        <div className="text-muted small">
-                          {formatFR(s.start)} — {formatFR(s.end)} {s.salle ? `• Salle ${s.salle}` : ""}<br />
-                          {(mat?.assigned_prof_name || s.enseignant) && (<span>Ens. {(mat?.assigned_prof_name || s.enseignant)}</span>)}
+                        <div className="fw-semibold mb-1 d-flex align-items-center gap-2">
+                          <span>{mat?.libelle || slot.matiere_libelle || "Matière"}</span>
+                          {source === "makeup" && <span className="badge bg-info-subtle text-info">Rattrapage</span>}
                         </div>
+                        <div className="text-muted small">
+                          {formatFR(slot.start)} — {formatFR(slot.end)} {slot.salle ? `• Salle ${slot.salle}` : ""}<br />
+                          {(mat?.assigned_prof_name || slot.enseignant) && (<span>Ens. {(mat?.assigned_prof_name || slot.enseignant)}</span>)}
+                        </div>
+                        {neutralized && (
+                          <div className="mt-2">
+                            <span className="badge bg-secondary">{reason || "Neutralisée"}</span>
+                          </div>
+                        )}
                       </div>
                     </button>
                   </div>
@@ -658,12 +944,16 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
           <div className="card-body">
             <div className="d-flex align-items-center justify-content-between mb-3">
               <h6 className="mb-0">Absents</h6>
-              <button className="btn btn-outline-primary btn-sm" onClick={exportPDF} disabled={exportBusy}>
+              <button className="btn btn-outline-primary btn-sm" onClick={exportPDF} disabled={exportBusy || !!selectedStatus?.neutralized}>
                 {exportBusy ? (<><span className="spinner-border spinner-border-sm me-2" />Export…</>) : "Exporter PDF"}
               </button>
             </div>
 
-            {stuLoading ? (
+            {selectedStatus?.neutralized ? (
+              <div className="alert alert-secondary mb-0">
+                Séance neutralisée — {selectedStatus.reason || "pas de cours"} : aucune absence attendue.
+              </div>
+            ) : stuLoading ? (
               <div className="text-center py-4"><div className="spinner-border" /></div>
             ) : absents.length === 0 ? (
               <div className="text-muted">Aucun absent enregistré pour cette séance.</div>
@@ -696,6 +986,64 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
           </div>
         </div>
       )}
+
+      {/* Modal Rattrapage */}
+      {showMakeup && (
+        <>
+          <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-lg modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title"><i className="bi bi-plus-circle me-2" /> Programmer un rattrapage</h5>
+                  <button className="btn-close" onClick={()=>setShowMakeup(false)} />
+                </div>
+                <div className="modal-body">
+                  <div className="row g-3">
+                    <div className="col-md-4">
+                      <label className="form-label">Date</label>
+                      <input type="date" className="form-control" value={mkDate} onChange={(e)=>setMkDate(e.target.value)} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label">Début</label>
+                      <input type="time" className="form-control" value={mkStart} onChange={(e)=>setMkStart(e.target.value)} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label">Fin</label>
+                      <input type="time" className="form-control" value={mkEnd} onChange={(e)=>setMkEnd(e.target.value)} />
+                    </div>
+
+                    <div className="col-md-6">
+                      <label className="form-label">Matière</label>
+                      <select className="form-select" value={mkMat} onChange={(e)=>setMkMat(e.target.value)}>
+                        <option value="">— choisir —</option>
+                        {Object.values(matieres).map(m => (
+                          <option key={m.id} value={m.id}>{m.libelle}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-md-3">
+                      <label className="form-label">Salle</label>
+                      <input className="form-control" value={mkSalle} onChange={(e)=>setMkSalle(e.target.value)} placeholder="ex: B12" />
+                    </div>
+                    <div className="col-md-3">
+                      <label className="form-label">Enseignant</label>
+                      <input className="form-control" value={mkEns} onChange={(e)=>setMkEns(e.target.value)} placeholder="(optionnel)" />
+                    </div>
+                  </div>
+                  <div className="form-text mt-2">
+                    Le rattrapage apparaît pour les étudiants de <b>{classe.libelle}</b> uniquement à la date indiquée.
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={()=>setShowMakeup(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={saveMakeup} disabled={!mkDate || !mkStart || !mkEnd || !mkMat}>Enregistrer</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={()=>setShowMakeup(false)} />
+        </>
+      )}
     </>
   );
 }
@@ -707,13 +1055,13 @@ function BilanClasse({ classe, yearId, yearLabel }:{
 }) {
   // période
   const today = new Date();
-  const [dateStart, setDateStart] = useState<string>(() => toISODate(addDays(today, -6))); // par défaut: 7 derniers jours
+  const [dateStart, setDateStart] = useState<string>(() => toISODate(addDays(today, -6))); // 7 derniers jours
   const [dateEnd, setDateEnd] = useState<string>(() => toISODate(today));
 
   type AbsenceEntryWithMeta = AbsenceEntry & { class_libelle: string; date: Date };
 
   const [rows, setRows] = useState<Array<{
-    matricule:string; nom:string; prenom?:string; // pour tri/affichage
+    matricule:string; nom:string; prenom?:string;
     cours:number; minutes:number; details:AbsenceEntryWithMeta[];
   }>>([]);
   const [loading, setLoading] = useState(false);
@@ -722,6 +1070,11 @@ function BilanClasse({ classe, yearId, yearLabel }:{
 
   const [students, setStudents] = useState<TUser[]>([]);
   const [stuLoading, setStuLoading] = useState(false);
+
+  // Métadonnées année + neutralisations
+  const [yearMeta, setYearMeta] = useState<{start?:Date; end?:Date}>({});
+  const [closures, setClosures] = useState<TClosureRule[]>([]);
+  const [overrides, setOverrides] = useState<TSessionOverride[]>([]);
 
   // Charger tous les étudiants de la classe (pour afficher aussi ceux à 0)
   useEffect(() => {
@@ -770,14 +1123,101 @@ function BilanClasse({ classe, yearId, yearLabel }:{
     fetchStudents();
   }, [classe.id, classe.academic_year_id]);
 
+  /* ====== Métadonnées année / closures / overrides ====== */
+  useEffect(() => {
+    const loadYearMeta = async () => {
+      if (!yearId) return setYearMeta({});
+      const yref = doc(db, "annees_scolaires", yearId);
+      const ydoc = await getDoc(yref);
+      if (ydoc.exists()) {
+        const v = ydoc.data() as any;
+        const sd = v.date_debut?.toDate?.() ?? null;
+        const ed = v.date_fin?.toDate?.() ?? null;
+        setYearMeta({ start: sd || undefined, end: ed || undefined });
+      } else {
+        setYearMeta({});
+      }
+    };
+    loadYearMeta();
+  }, [yearId]);
+
+  useEffect(() => {
+    const loadClosures = async () => {
+      try {
+        const arr: TClosureRule[] = [];
+        const snap = await getDocs(collection(db, `years/${yearId}/closures`));
+        snap.forEach((d) => {
+          const v = d.data() as any;
+          arr.push({
+            id: d.id,
+            scope: v.scope,
+            filiere_id: v.filiere_id,
+            class_id: v.class_id,
+            matiere_id: v.matiere_id,
+            start: (v.start?.toDate?.() ?? v.start) as Date,
+            end: (v.end?.toDate?.() ?? v.end) as Date,
+            start_time: v.start_time || undefined,
+            end_time: v.end_time || undefined,
+            label: v.label || undefined,
+          });
+        });
+        setClosures(arr);
+      } catch { setClosures([]); }
+    };
+    if (yearId) loadClosures();
+  }, [yearId]);
+
+  useEffect(() => {
+    const loadOverrides = async () => {
+      try {
+        const arr: TSessionOverride[] = [];
+        const snap = await getDocs(collection(db, `years/${yearId}/session_overrides`));
+        snap.forEach((d) => {
+          const v = d.data() as any;
+          if (v.type === "cancel") {
+            arr.push({
+              id: d.id, type: "cancel",
+              class_id: String(v.class_id), matiere_id: String(v.matiere_id),
+              date: (v.date?.toDate?.() ?? v.date) as Date,
+              start: String(v.start), end: String(v.end),
+              reason: v.reason,
+            });
+          } else if (v.type === "reschedule") {
+            arr.push({
+              id: d.id, type: "reschedule",
+              class_id: String(v.class_id), matiere_id: String(v.matiere_id),
+              date: (v.date?.toDate?.() ?? v.date) as Date,
+              start: String(v.start), end: String(v.end),
+              new_date: (v.new_date?.toDate?.() ?? v.new_date) as Date,
+              new_start: String(v.new_start), new_end: String(v.new_end),
+              reason: v.reason,
+            });
+          } else if (v.type === "makeup") {
+            arr.push({
+              id: d.id, type: "makeup",
+              class_id: String(v.class_id), matiere_id: String(v.matiere_id),
+              date: (v.date?.toDate?.() ?? v.date) as Date,
+              start: String(v.start), end: String(v.end),
+              salle: v.salle || undefined,
+              enseignant: v.enseignant || undefined,
+              matiere_libelle: v.matiere_libelle || undefined,
+              reason: v.reason,
+            } as any);
+          }
+        });
+        setOverrides(arr);
+      } catch { setOverrides([]); }
+    };
+    if (yearId) loadOverrides();
+  }, [yearId]);
+
   const load = async () => {
     setLoading(true);
     try {
       const s = startOfDay(fromISODate(dateStart));
       const e = endOfDay(fromISODate(dateEnd));
 
-      // 1) Tentative sans index composite: sous-collection par année/classe
-      //    years/{yearId}/classes/{classId}/emargements
+      // Sous-collection optimisée (si présente)
       let docs: Array<SeanceDoc & Record<string, any>> = [];
       try {
         const subSnap = await getDocs(
@@ -788,13 +1228,9 @@ function BilanClasse({ classe, yearId, yearLabel }:{
           )
         );
         subSnap.forEach((d) => docs.push(d.data() as any));
-      } catch (err) {
-        // ignore -> on passera en fallback
-        // console.warn("Subcollection read failed, fallback to root emargements.", err);
-      }
+      } catch {}
 
-      // 2) Fallback: root collection "emargements" avec filtre par date uniquement,
-      //    puis filtrage en mémoire par annee + class_id (évite index composite).
+      // Fallback root
       if (docs.length === 0) {
         const rootSnap = await getDocs(
           query(
@@ -811,8 +1247,9 @@ function BilanClasse({ classe, yearId, yearLabel }:{
         });
       }
 
-      // Agrégation par matricule: nb cours (entrées) + minutes manquées
-      type Agg = { nom:string; prenom?:string; cours:number; minutes:number; details:AbsenceEntryWithMeta[] };
+      // Agrégation par matricule
+      type AbsenceEntryWithMetaX = AbsenceEntry & { class_libelle: string; date: Date };
+      type Agg = { nom:string; prenom?:string; cours:number; minutes:number; details:AbsenceEntryWithMetaX[] };
       const byMat: Record<string, Agg> = {};
 
       for (const data of docs) {
@@ -820,6 +1257,21 @@ function BilanClasse({ classe, yearId, yearLabel }:{
         const dateVal: Date = (data.date?.toDate?.() ?? data.date) as Date;
         const docStart = String(data.start || "");
         const docEnd = String(data.end || "");
+        const matId = String(data.matiere_id || data.matiereId || "");
+
+        // 🔎 Ignorer si neutralisée (annulée / fermée / hors année)
+        const evalRes = evaluateNeutralization({
+          date: calStartOfDay(dateVal),
+          class_id: classe.id,
+          matiere_id: matId,
+          start: docStart,
+          end: docEnd,
+          closures,
+          overrides,
+          yearStart: yearMeta.start,
+          yearEnd: yearMeta.end,
+        });
+        if (evalRes.neutralized) continue;
 
         for (const k of Object.keys(data)) {
           const val = (data as any)[k];
@@ -853,27 +1305,22 @@ function BilanClasse({ classe, yearId, yearLabel }:{
         }
       }
 
-      // Construire la table finale:
-      // - inclure tous les étudiants (même 0)
+      // Construire la table finale (inclure tous les étudiants avec 0)
       const mapRows = new Map<string, { matricule:string; nom:string; prenom?:string; cours:number; minutes:number; details:AbsenceEntryWithMeta[] }>();
-      // init 0 pour tous
-      for (const s of students) {
-        const nom = `${s.nom} ${s.prenom}`.trim();
-        if (s.matricule) {
-          mapRows.set(s.matricule, { matricule: s.matricule, nom, prenom: s.prenom, cours: 0, minutes: 0, details: [] });
+      for (const s0 of students) {
+        const nom = `${s0.nom} ${s0.prenom}`.trim();
+        if (s0.matricule) {
+          mapRows.set(s0.matricule, { matricule: s0.matricule, nom, prenom: s0.prenom, cours: 0, minutes: 0, details: [] });
         }
       }
-      // écraser par les absences agrégées
       for (const [mat, ag] of Object.entries(byMat)) {
         const prev = mapRows.get(mat);
         if (prev) {
           prev.cours = ag.cours;
           prev.minutes = ag.minutes;
           prev.details = ag.details;
-          // conserver nom si mieux
           if (ag.nom && ag.nom !== "—") prev.nom = ag.nom;
         } else {
-          // élève absent non présent dans la liste (au cas où)
           mapRows.set(mat, { matricule: mat, nom: ag.nom || "—", cours: ag.cours, minutes: ag.minutes, details: ag.details });
         }
       }
@@ -890,7 +1337,7 @@ function BilanClasse({ classe, yearId, yearLabel }:{
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [dateStart, dateEnd, classe.id, yearId, students.length]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [dateStart, dateEnd, classe.id, yearId, students.length, closures.length, overrides.length, yearMeta.start, yearMeta.end]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -992,7 +1439,7 @@ function BilanClasse({ classe, yearId, yearLabel }:{
   );
 }
 
-/* ========================= Modal Détails (liste des séances d’absence) ========================= */
+/* ========================= Modal Détails ========================= */
 
 function DetailsModal({ title, items, onClose }:{
   title: string;

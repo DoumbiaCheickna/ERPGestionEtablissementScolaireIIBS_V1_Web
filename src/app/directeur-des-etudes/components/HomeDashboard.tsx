@@ -1,4 +1,4 @@
-// src/app/directeur-des-etudes/components/HomeDashboard.tsx 
+// src/app/directeur-des-etudes/components/HomeDashboard.tsx
 'use client';
 
 import React from 'react';
@@ -7,11 +7,22 @@ import { useAcademicYear } from '../context/AcademicYearContext';
 import Toast from '../../admin/components/ui/Toast';
 
 export default function HomeDashboard() {
-  const { years, selected, setSelectedById, createYear, loading } = useAcademicYear();
+  const { years, selected, setSelectedById, createYear, updateYear, loading } = useAcademicYear();
 
   // Modal création année
   const [showNewYear, setShowNewYear] = React.useState(false);
   const [newYear, setNewYear] = React.useState('');
+  const [newStart, setNewStart] = React.useState('');       // YYYY-MM-DD
+  const [newEnd, setNewEnd] = React.useState('');           // YYYY-MM-DD
+  const [newTz, setNewTz] = React.useState('Africa/Dakar');
+  const [newActive, setNewActive] = React.useState(false);
+
+  // Modal édition année
+  const [showEdit, setShowEdit] = React.useState(false);
+  const [editStart, setEditStart] = React.useState('');
+  const [editEnd, setEditEnd] = React.useState('');
+  const [editTz, setEditTz] = React.useState('Africa/Dakar');
+  const [editActive, setEditActive] = React.useState(false);
 
   // Toasts
   const [toastMsg, setToastMsg] = React.useState('');
@@ -20,11 +31,25 @@ export default function HomeDashboard() {
   const ok = (m: string) => { setToastMsg(m); setOkShow(true); };
   const ko = (m: string) => { setToastMsg(m); setErrShow(true); };
 
+  const onOpenCreate = () => {
+    setNewYear('');
+    setNewStart('');
+    setNewEnd('');
+    setNewTz('Africa/Dakar');
+    setNewActive(false);
+    setShowNewYear(true);
+  };
+
   const onCreateYear = async () => {
     try {
-      await createYear(newYear);
+      await createYear({
+        label: newYear,
+        date_debut: newStart,
+        date_fin: newEnd,
+        timezone: newTz || 'Africa/Dakar',
+        active: newActive,
+      });
       setShowNewYear(false);
-      setNewYear('');
       ok('Année académique créée et sélectionnée.');
     } catch (e: any) {
       console.error(e);
@@ -32,12 +57,36 @@ export default function HomeDashboard() {
     }
   };
 
+  const onOpenEdit = () => {
+    if (!selected) return;
+    setEditStart((selected as any).date_debut || '');
+    setEditEnd((selected as any).date_fin || '');
+    setEditTz((selected as any).timezone || 'Africa/Dakar');
+    setEditActive(!!(selected as any).active);
+    setShowEdit(true);
+  };
+
+  const onSaveEdit = async () => {
+    if (!selected) return;
+    try {
+      await updateYear(selected.id, {
+        date_debut: editStart,
+        date_fin: editEnd,
+        timezone: editTz || 'Africa/Dakar',
+        active: editActive,
+      });
+      setShowEdit(false);
+      ok('Année académique mise à jour.');
+    } catch (e: any) {
+      console.error(e);
+      ko(e?.message || "Impossible de modifier l'année académique.");
+    }
+  };
+
   // ✅ Sync: persiste l'année sélectionnée pour toutes les pages
   React.useEffect(() => {
     if (selected?.label) {
-      try {
-        localStorage.setItem('app.selectedAnnee', selected.label);
-      } catch {}
+      try { localStorage.setItem('app.selectedAnnee', selected.label); } catch {}
     }
   }, [selected?.label]);
 
@@ -132,7 +181,11 @@ export default function HomeDashboard() {
             ))}
           </select>
 
-          <button className="btn btn-dark btn-sm" onClick={() => setShowNewYear(true)}>
+          <button className="btn btn-outline-secondary btn-sm" disabled={!selected} onClick={onOpenEdit}>
+            <i className="bi bi-pencil me-1" /> Modifier
+          </button>
+
+          <button className="btn btn-dark btn-sm" onClick={onOpenCreate}>
             <i className="bi bi-plus-lg me-1" />
             Créer une année
           </button>
@@ -146,7 +199,6 @@ export default function HomeDashboard() {
             }
             className="btn btn-primary btn-sm"
             onClick={() => {
-              // double sécurité si l’utilisateur ouvre dans un nouvel onglet
               if (selectedLabel) {
                 try { localStorage.setItem('app.selectedAnnee', selectedLabel); } catch {}
               }
@@ -163,8 +215,18 @@ export default function HomeDashboard() {
         <div className="card-body">
           <div className="text-muted">
             Année académique active : <strong>{selected?.label || '—'}</strong>
+            {(selected as any)?.active ? (
+              <span className="badge bg-success-subtle text-success ms-2">active</span>
+            ) : null}
           </div>
           <div className="small text-muted mt-1">
+            Période : <strong>{(selected as any)?.date_debut || '—'}</strong> →{' '}
+            <strong>{(selected as any)?.date_fin || '—'}</strong>
+            {(selected as any)?.timezone ? (
+              <span> • TZ <code>{(selected as any).timezone}</code></span>
+            ) : null}
+          </div>
+          <div className="small text-muted mt-2">
             Dès que vous créez une filière, une classe, une UE, une matière ou un emploi du temps,
             l’année <strong>{selected?.label || '—'}</strong> est enregistrée et utilisée pour tous les filtres.
           </div>
@@ -184,7 +246,9 @@ export default function HomeDashboard() {
                 <i className="bi bi-mortarboard text-primary fs-5" />
               </div>
               <div className="fs-3 fw-semibold mt-1">{stats.etudiants}</div>
-              <div className="small text-success"><i className="bi bi-arrow-up-short" /> +{Math.max(1, Math.floor(stats.etudiants * 0.03))} ce mois</div>
+              <div className="small text-success">
+                <i className="bi bi-arrow-up-short" /> +{Math.max(1, Math.floor(stats.etudiants * 0.03))} ce mois
+              </div>
             </div>
           </div>
         </div>
@@ -196,7 +260,9 @@ export default function HomeDashboard() {
                 <i className="bi bi-person-badge text-primary fs-5" />
               </div>
               <div className="fs-3 fw-semibold mt-1">{stats.profs}</div>
-              <div className="small text-muted"><i className="bi bi-people" /> Ratio ~ {Math.max(8, Math.round(stats.etudiants / Math.max(1, stats.profs)))} étudiants / prof</div>
+              <div className="small text-muted">
+                <i className="bi bi-people" /> Ratio ~ {Math.max(8, Math.round(stats.etudiants / Math.max(1, stats.profs)))} étudiants / prof
+              </div>
             </div>
           </div>
         </div>
@@ -220,7 +286,9 @@ export default function HomeDashboard() {
                 <i className="bi bi-columns-gap text-primary fs-5" />
               </div>
               <div className="fs-3 fw-semibold mt-1">{stats.classes}</div>
-              <div className="small text-muted">Capacité moyenne ~ {Math.round(stats.etudiants / Math.max(1, stats.classes))} étudiants</div>
+              <div className="small text-muted">
+                Capacité moyenne ~ {Math.round(stats.etudiants / Math.max(1, stats.classes))} étudiants
+              </div>
             </div>
           </div>
         </div>
@@ -344,29 +412,105 @@ export default function HomeDashboard() {
                   <button type="button" className="btn-close" onClick={() => setShowNewYear(false)} aria-label="Close" />
                 </div>
                 <div className="modal-body">
-                  <label className="form-label">Libellé (format YYYY-YYYY)</label>
-                  <input
-                    className="form-control"
-                    value={newYear}
-                    onChange={(e) => setNewYear(e.target.value)}
-                    placeholder="ex: 2025-2026"
-                  />
-                  <small className="text-muted">
-                    Exemple&nbsp;: 2025-2026 (l’année de droite doit être égale à l’année de gauche + 1).
-                  </small>
+                  <div className="mb-3">
+                    <label className="form-label">Libellé (format YYYY-YYYY)</label>
+                    <input
+                      className="form-control"
+                      value={newYear}
+                      onChange={(e) => setNewYear(e.target.value)}
+                      placeholder="ex: 2025-2026"
+                    />
+                    <small className="text-muted">
+                      Exemple : 2025-2026 (l’année de droite = année de gauche + 1).
+                    </small>
+                  </div>
+
+                  <div className="row g-3">
+                    <div className="col-md-6">
+                      <label className="form-label">Début d’année</label>
+                      <input type="date" className="form-control" value={newStart} onChange={(e)=>setNewStart(e.target.value)} />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label">Fin d’année</label>
+                      <input type="date" className="form-control" value={newEnd} onChange={(e)=>setNewEnd(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div className="row g-3 mt-1">
+                    <div className="col-md-8">
+                      <label className="form-label">Timezone</label>
+                      <input className="form-control" value={newTz} onChange={(e)=>setNewTz(e.target.value)} placeholder="Africa/Dakar" />
+                    </div>
+                    <div className="col-md-4 d-flex align-items-end">
+                      <div className="form-check">
+                        <input id="new-active" type="checkbox" className="form-check-input" checked={newActive} onChange={(e)=>setNewActive(e.target.checked)} />
+                        <label className="form-check-label" htmlFor="new-active">Active</label>
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
                 <div className="modal-footer">
-                  <button className="btn btn-outline-secondary" onClick={() => setShowNewYear(false)}>
-                    Annuler
-                  </button>
-                  <button className="btn btn-primary" onClick={onCreateYear}>
-                    Enregistrer
-                  </button>
+                  <button className="btn btn-outline-secondary" onClick={() => setShowNewYear(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={onCreateYear}>Enregistrer</button>
                 </div>
               </div>
             </div>
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowNewYear(false)} />
+        </>
+      )}
+
+      {/* Modal édition année académique */}
+      {showEdit && selected && (
+        <>
+          <div className="modal fade show" style={{ display: 'block' }} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">
+                    <i className="bi bi-pencil-square me-2" />
+                    Modifier {selected.label}
+                  </h5>
+                  <button type="button" className="btn-close" onClick={() => setShowEdit(false)} aria-label="Close" />
+                </div>
+                <div className="modal-body">
+                  <div className="row g-3">
+                    <div className="col-md-6">
+                      <label className="form-label">Début d’année</label>
+                      <input type="date" className="form-control" value={editStart} onChange={(e)=>setEditStart(e.target.value)} />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label">Fin d’année</label>
+                      <input type="date" className="form-control" value={editEnd} onChange={(e)=>setEditEnd(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div className="row g-3 mt-1">
+                    <div className="col-md-8">
+                      <label className="form-label">Timezone</label>
+                      <input className="form-control" value={editTz} onChange={(e)=>setEditTz(e.target.value)} />
+                    </div>
+                    <div className="col-md-4 d-flex align-items-end">
+                      <div className="form-check">
+                        <input id="edit-active" type="checkbox" className="form-check-input" checked={editActive} onChange={(e)=>setEditActive(e.target.checked)} />
+                        <label className="form-check-label" htmlFor="edit-active">Active</label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="form-text mt-2">
+                    Astuce : marquez comme <b>Active</b> l’année en cours pour vos filtres et écrans par défaut.
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setShowEdit(false)}>Annuler</button>
+                  <button className="btn btn-primary" onClick={onSaveEdit}>Enregistrer</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={() => setShowEdit(false)} />
         </>
       )}
 
