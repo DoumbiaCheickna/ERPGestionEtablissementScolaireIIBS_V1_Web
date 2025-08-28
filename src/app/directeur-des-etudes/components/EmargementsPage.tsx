@@ -83,7 +83,8 @@ type AbsenceEntry = {
   end: string;
   salle?: string;
   enseignant?: string;
-  matiereId: string;
+  matiereId?: string;          // présent dans tes exemples
+  matiere_id?: string;         // fallback
   matiere_libelle: string;
   matricule: string;
   nom_complet: string;
@@ -135,6 +136,19 @@ const formatFR = (hhmm: string) => {
 
 const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 
+const parseHHMMtoMinutes = (s?: string) => {
+  if (!s) return 0;
+  const [h, m] = s.split(":").map((x) => parseInt(x || "0", 10));
+  return (h || 0) * 60 + (m || 0);
+};
+const formatMinutes = (mins: number) => {
+  if (mins <= 0) return "0 h";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+};
+
 /* ========================= Page ========================= */
 
 export default function EmargementsPage() {
@@ -144,7 +158,6 @@ export default function EmargementsPage() {
 
   // UI : section & sélections
   const [section, setSection] = useState<SectionKey>("Gestion");
-  const [mode, setMode] = useState<"classes" | "global">("classes");
 
   const [filieres, setFilieres] = useState<TFiliere[]>([]);
   const [selectedFiliere, setSelectedFiliere] = useState<TFiliere | null>(null);
@@ -229,91 +242,83 @@ export default function EmargementsPage() {
           <h2 className="mb-0">Émargements</h2>
           <div className="text-muted">Année : <strong>{academicYearLabel || "—"}</strong></div>
         </div>
-        <div className="btn-group" role="group" aria-label="Vue">
-          <button className={clsx("btn btn-sm", mode==="classes"?"btn-primary":"btn-outline-primary")} onClick={()=>setMode("classes")}>Par classe</button>
-          <button className={clsx("btn btn-sm", mode==="global"?"btn-primary":"btn-outline-primary")} onClick={()=>{ setMode("global"); setOpenedClasse(null); }}>Bilan global</button>
-        </div>
       </div>
 
-      {mode === "global" ? (
-        <GlobalBilanView academicYearId={academicYearId} academicYearLabel={academicYearLabel} />
-      ) : (
-        <div className="row">
-          {/* === MENU LATERAL === */}
-          <aside className="col-12 col-md-3 col-lg-2 mb-3 mb-md-0">
-            <div className="card border-0 shadow-sm">
-              <div className="card-body p-2">
-                <div className="list-group list-group-flush">
-                  {(["Gestion", "Informatique"] as SectionKey[]).map((s) => (
-                    <button
-                      key={s}
-                      className={clsx(
-                        "list-group-item list-group-item-action rounded-2 my-1",
-                        s === section ? "bg-primary text-white border-0" : "bg-light border text-dark"
-                      )}
-                      onClick={() => { setSection(s); setOpenedClasse(null); }}
-                    >
-                      <i className={clsx("me-2", s === "Gestion" ? "bi bi-briefcase" : "bi bi-pc-display")} />
-                      {s}
-                    </button>
-                  ))}
-                </div>
+      <div className="row">
+        {/* === MENU LATERAL === */}
+        <aside className="col-12 col-md-3 col-lg-2 mb-3 mb-md-0">
+          <div className="card border-0 shadow-sm">
+            <div className="card-body p-2">
+              <div className="list-group list-group-flush">
+                {(["Gestion", "Informatique"] as SectionKey[]).map((s) => (
+                  <button
+                    key={s}
+                    className={clsx(
+                      "list-group-item list-group-item-action rounded-2 my-1",
+                      s === section ? "bg-primary text-white border-0" : "bg-light border text-dark"
+                    )}
+                    onClick={() => { setSection(s); setOpenedClasse(null); }}
+                  >
+                    <i className={clsx("me-2", s === "Gestion" ? "bi bi-briefcase" : "bi bi-pc-display")} />
+                    {s}
+                  </button>
+                ))}
+              </div>
 
-                <div className="mt-3 small">
-                  <div className="text-muted">Année sélectionnée</div>
-                  <div className="fw-semibold">{academicYearLabel || "—"}</div>
-                </div>
+              <div className="mt-3 small">
+                <div className="text-muted">Année sélectionnée</div>
+                <div className="fw-semibold">{academicYearLabel || "—"}</div>
               </div>
             </div>
-          </aside>
+          </div>
+        </aside>
 
-          {/* === CONTENU === */}
-          <main className="col-12 col-md-9 col-lg-10">
-            <div className="d-flex align-items-center justify-content-between mb-3">
-              <h5 className="mb-0">{selectedFiliere ? `Filière — ${selectedFiliere.libelle}` : "Filière"}</h5>
-              <button className="btn btn-outline-secondary btn-sm" onClick={() => setSelectedFiliere((f) => (f ? { ...f } : f))}>
-                Actualiser vue
-              </button>
-            </div>
+        {/* === CONTENU === */}
+        <main className="col-12 col-md-9 col-lg-10">
+          <div className="d-flex align-items-center justify-content-between mb-3">
+            <h5 className="mb-0">{selectedFiliere ? `Filière — ${selectedFiliere.libelle}` : "Filière"}</h5>
+            <button className="btn btn-outline-secondary btn-sm" onClick={() => setSelectedFiliere((f) => (f ? { ...f } : f))}>
+              Actualiser vue
+            </button>
+          </div>
 
-            {/* CLASSES */}
-            {!openedClasse ? (
-              <div className="card border-0 shadow-sm">
-                <div className="card-body">
-                  {classes.length === 0 ? (
-                    <div className="text-muted">Aucune classe.</div>
-                  ) : (
-                    <div className="row g-3">
-                      {classes.map((c) => (
-                        <div key={c.id} className="col-12 col-md-6 col-lg-4 d-flex align-items-stretch">
-                          <div className="card shadow-sm border-0 rounded-3 p-3 h-100 w-100">
-                            <div className="card-body d-flex flex-column">
-                              <div className="mb-2">
-                                <div className="fw-bold text-primary text-truncate" title={c.libelle}>{c.libelle}</div>
-                                <div className="text-muted small">{c.niveau_libelle}</div>
-                              </div>
-                              <div className="mt-auto">
-                                <button className="btn btn-outline-secondary w-100" onClick={() => setOpenedClasse(c)}>
-                                  Ouvrir (absences & bilan)
-                                </button>
-                              </div>
+          {/* CLASSES */}
+          {!openedClasse ? (
+            <div className="card border-0 shadow-sm">
+              <div className="card-body">
+                {classes.length === 0 ? (
+                  <div className="text-muted">Aucune classe.</div>
+                ) : (
+                  <div className="row g-3">
+                    {classes.map((c) => (
+                      <div key={c.id} className="col-12 col-md-6 col-lg-4 d-flex align-items-stretch">
+                        <div className="card shadow-sm border-0 rounded-3 p-3 h-100 w-100">
+                          <div className="card-body d-flex flex-column">
+                            <div className="mb-2">
+                              <div className="fw-bold text-primary text-truncate" title={c.libelle}>{c.libelle}</div>
+                              <div className="text-muted small">{c.niveau_libelle}</div>
+                            </div>
+                            <div className="mt-auto">
+                              <button className="btn btn-outline-secondary w-100" onClick={() => setOpenedClasse(c)}>
+                                Ouvrir (absents & bilan)
+                              </button>
                             </div>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ) : (
-              <ClasseView
-                classe={openedClasse}
-                onBack={() => setOpenedClasse(null)}
-              />
-            )}
-          </main>
-        </div>
-      )}
+            </div>
+          ) : (
+            <ClasseView
+              classe={openedClasse}
+              onBack={() => setOpenedClasse(null)}
+            />
+          )}
+        </main>
+      </div>
 
       {/* toasts */}
       <Toast message={toastMsg} type="success" show={okShow} onClose={() => setOkShow(false)} />
@@ -702,81 +707,198 @@ function BilanClasse({ classe, yearId, yearLabel }:{
 }) {
   // période
   const today = new Date();
-  const [dateStart, setDateStart] = useState<string>(() => toISODate(addDays(today, -6))); // semaine -6..0
+  const [dateStart, setDateStart] = useState<string>(() => toISODate(addDays(today, -6))); // par défaut: 7 derniers jours
   const [dateEnd, setDateEnd] = useState<string>(() => toISODate(today));
-
-  const [rows, setRows] = useState<Array<{matricule:string; nom:string; classe:string; count:number; details:AbsenceEntryWithMeta[]}>>([]);
-  const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
-  const [detailFor, setDetailFor] = useState<{matricule:string; nom:string; classe:string; items:AbsenceEntryWithMeta[]}|null>(null);
 
   type AbsenceEntryWithMeta = AbsenceEntry & { class_libelle: string; date: Date };
 
-  const quick = {
-    semaine: () => {
-      const d = new Date(); const dow = dayOfWeekLundi1(d); // 1..7
-      const start = addDays(startOfDay(d), -(dow-1));
-      const end = addDays(start, 6);
-      setDateStart(toISODate(start)); setDateEnd(toISODate(end));
-    },
-    "30j": () => { setDateStart(toISODate(addDays(today, -29))); setDateEnd(toISODate(today)); },
-    "3m": () => { const s = new Date(today); s.setMonth(s.getMonth()-3); setDateStart(toISODate(s)); setDateEnd(toISODate(today)); },
-    "6m": () => { const s = new Date(today); s.setMonth(s.getMonth()-6); setDateStart(toISODate(s)); setDateEnd(toISODate(today)); },
-    annee: () => { // année scolaire supposée connue par label: "YYYY-YYYY"
-      const [y1, y2] = yearLabel.split("-").map(Number);
-      const start = new Date(y1, 8, 1); // 1er Sept N
-      const end = new Date(y2, 7, 31);  // 31 Août N+1
-      setDateStart(toISODate(start)); setDateEnd(toISODate(end));
-    }
-  };
+  const [rows, setRows] = useState<Array<{
+    matricule:string; nom:string; prenom?:string; // pour tri/affichage
+    cours:number; minutes:number; details:AbsenceEntryWithMeta[];
+  }>>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [detailFor, setDetailFor] = useState<{matricule:string; nom:string; items:AbsenceEntryWithMeta[]}|null>(null);
+
+  const [students, setStudents] = useState<TUser[]>([]);
+  const [stuLoading, setStuLoading] = useState(false);
+
+  // Charger tous les étudiants de la classe (pour afficher aussi ceux à 0)
+  useEffect(() => {
+    const fetchStudents = async () => {
+      setStuLoading(true);
+      try {
+        const bag = new Map<string, TUser>();
+        const push = (d: any) => {
+          const v = d.data() as any;
+          bag.set(d.id, {
+            id: d.id,
+            prenom: String(v.prenom || ""),
+            nom: String(v.nom || ""),
+            email: String(v.email || ""),
+            telephone: String(v.telephone || ""),
+            matricule: String(v.matricule || ""),
+            classe_id: v.classe_id ?? null,
+            classe: String(v.classe || v.classe_libelle || ""),
+            academic_year_id: String(v.academic_year_id || ""),
+            annee_academique: String(v.annee_academique || ""),
+            parcours: Array.isArray(v.parcours) ? v.parcours : [],
+            parcours_keys: Array.isArray(v.parcours_keys) ? v.parcours_keys : [],
+          });
+        };
+
+        {
+          const snap = await getDocs(
+            query(collection(db, "users"), where("classe_id", "==", classe.id), where("academic_year_id", "==", classe.academic_year_id))
+          );
+          snap.forEach(push);
+        }
+        { const snap = await getDocs(query(collection(db, "users"), where("classe_id", "==", classe.id))); snap.forEach(push); }
+        for (const field of ["classe", "classe_libelle"] as const) {
+          const snap = await getDocs(query(collection(db, "users"), where(field, "==", classe.libelle))); snap.forEach(push);
+        }
+        {
+          const key = keyForParcours(classe.academic_year_id, classe.id);
+          const snap = await getDocs(query(collection(db, "users"), where("parcours_keys", "array-contains", key)));
+          snap.forEach(push);
+        }
+
+        const list = Array.from(bag.values());
+        setStudents(list);
+      } finally { setStuLoading(false); }
+    };
+    fetchStudents();
+  }, [classe.id, classe.academic_year_id]);
 
   const load = async () => {
     setLoading(true);
-    try{
+    try {
       const s = startOfDay(fromISODate(dateStart));
       const e = endOfDay(fromISODate(dateEnd));
 
-      const snap = await getDocs(
-        query(
-          collection(db, "emargements"),
-          where("annee", "==", yearId),
-          where("class_id", "==", classe.id),
-          where("date", ">=", s),
-          where("date", "<=", e)
-        )
-      );
+      // 1) Tentative sans index composite: sous-collection par année/classe
+      //    years/{yearId}/classes/{classId}/emargements
+      let docs: Array<SeanceDoc & Record<string, any>> = [];
+      try {
+        const subSnap = await getDocs(
+          query(
+            collection(db, `years/${yearId}/classes/${classe.id}/emargements`),
+            where("date", ">=", s),
+            where("date", "<=", e)
+          )
+        );
+        subSnap.forEach((d) => docs.push(d.data() as any));
+      } catch (err) {
+        // ignore -> on passera en fallback
+        // console.warn("Subcollection read failed, fallback to root emargements.", err);
+      }
 
-      // agrégation
-      const byMat: Record<string, { nom:string; classe:string; count:number; details:AbsenceEntryWithMeta[] }> = {};
+      // 2) Fallback: root collection "emargements" avec filtre par date uniquement,
+      //    puis filtrage en mémoire par annee + class_id (évite index composite).
+      if (docs.length === 0) {
+        const rootSnap = await getDocs(
+          query(
+            collection(db, "emargements"),
+            where("date", ">=", s),
+            where("date", "<=", e)
+          )
+        );
+        rootSnap.forEach((d) => {
+          const data = d.data() as any;
+          if (String(data.annee) === yearId && String(data.class_id) === classe.id) {
+            docs.push(data);
+          }
+        });
+      }
 
-      snap.forEach((d) => {
-        const data = d.data() as SeanceDoc & Record<string, any>;
+      // Agrégation par matricule: nb cours (entrées) + minutes manquées
+      type Agg = { nom:string; prenom?:string; cours:number; minutes:number; details:AbsenceEntryWithMeta[] };
+      const byMat: Record<string, Agg> = {};
+
+      for (const data of docs) {
         const classLib = data.class_libelle;
-        const dateVal = (data.date?.toDate?.() ?? data.date) as Date;
+        const dateVal: Date = (data.date?.toDate?.() ?? data.date) as Date;
+        const docStart = String(data.start || "");
+        const docEnd = String(data.end || "");
 
         for (const k of Object.keys(data)) {
           const val = (data as any)[k];
           if (Array.isArray(val)) {
             const list = val as AbsenceEntry[];
-            if (!byMat[k]) byMat[k] = { nom: list[0]?.nom_complet || "—", classe: classLib, count: 0, details: [] };
-            byMat[k].count += list.length;
-            byMat[k].details.push(...list.map(x => ({ ...x, class_libelle: classLib, date: dateVal })));
+
+            if (!byMat[k]) {
+              // essayer de retrouver nom/prenom via students
+              const stu = students.find((s) => (s.matricule || "") === k);
+              const nomComplet = list[0]?.nom_complet || (stu ? `${stu.nom} ${stu.prenom}` : "—");
+              let nom = nomComplet;
+              let prenom: string | undefined = undefined;
+              if (stu) { nom = `${stu.nom} ${stu.prenom}`; prenom = stu.prenom; }
+              byMat[k] = { nom, prenom, cours: 0, minutes: 0, details: [] };
+            }
+
+            for (const x of list) {
+              const st = x.start || docStart;
+              const en = x.end || docEnd;
+              const minutes = Math.max(0, parseHHMMtoMinutes(en) - parseHHMMtoMinutes(st));
+              byMat[k].cours += 1;
+              byMat[k].minutes += minutes;
+              byMat[k].details.push({
+                ...x,
+                matiereId: x.matiereId ?? x.matiere_id,
+                class_libelle: classLib,
+                date: dateVal,
+              });
+            }
           }
         }
-      });
+      }
 
-      const arr = Object.entries(byMat).map(([mat, v]) => ({ matricule: mat, nom: v.nom, classe: v.classe, count: v.count, details: v.details }));
-      arr.sort((a,b)=> b.count - a.count || a.nom.localeCompare(b.nom,"fr",{sensitivity:"base"}));
+      // Construire la table finale:
+      // - inclure tous les étudiants (même 0)
+      const mapRows = new Map<string, { matricule:string; nom:string; prenom?:string; cours:number; minutes:number; details:AbsenceEntryWithMeta[] }>();
+      // init 0 pour tous
+      for (const s of students) {
+        const nom = `${s.nom} ${s.prenom}`.trim();
+        if (s.matricule) {
+          mapRows.set(s.matricule, { matricule: s.matricule, nom, prenom: s.prenom, cours: 0, minutes: 0, details: [] });
+        }
+      }
+      // écraser par les absences agrégées
+      for (const [mat, ag] of Object.entries(byMat)) {
+        const prev = mapRows.get(mat);
+        if (prev) {
+          prev.cours = ag.cours;
+          prev.minutes = ag.minutes;
+          prev.details = ag.details;
+          // conserver nom si mieux
+          if (ag.nom && ag.nom !== "—") prev.nom = ag.nom;
+        } else {
+          // élève absent non présent dans la liste (au cas où)
+          mapRows.set(mat, { matricule: mat, nom: ag.nom || "—", cours: ag.cours, minutes: ag.minutes, details: ag.details });
+        }
+      }
+
+      const arr = Array.from(mapRows.values());
+      arr.sort((a, b) =>
+        b.cours - a.cours ||
+        b.minutes - a.minutes ||
+        a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" })
+      );
       setRows(arr);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(()=>{ load(); /* eslint-disable-next-line */ }, [dateStart, dateEnd, classe.id, yearId]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [dateStart, dateEnd, classe.id, yearId, students.length]);
 
-  const filtered = useMemo(()=>{
-    if(!search.trim()) return rows;
+  const filtered = useMemo(() => {
+    if (!search.trim()) return rows;
     const q = search.toLowerCase();
-    return rows.filter(r => r.matricule.toLowerCase().includes(q) || r.nom.toLowerCase().includes(q));
+    return rows.filter(r =>
+      r.matricule.toLowerCase().includes(q) ||
+      r.nom.toLowerCase().includes(q)
+    );
   }, [rows, search]);
 
   return (
@@ -793,14 +915,15 @@ function BilanClasse({ classe, yearId, yearLabel }:{
               <input type="date" className="form-control" value={dateEnd} onChange={(e)=>setDateEnd(e.target.value)} />
             </div>
             <div className="col-md-6 d-flex gap-2">
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick.semaine}>Semaine</button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick["30j"]}>30 jours</button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick["3m"]}>3 mois</button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick["6m"]}>6 mois</button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick.annee}>Année scolaire</button>
               <div className="ms-auto" />
-              <input className="form-control" placeholder="Rechercher (matricule, nom)" value={search} onChange={(e)=>setSearch(e.target.value)} style={{maxWidth:260}} />
-              <button className="btn btn-outline-primary btn-sm" onClick={load} disabled={loading}>
+              <input
+                className="form-control"
+                placeholder="Rechercher (matricule, nom)"
+                value={search}
+                onChange={(e)=>setSearch(e.target.value)}
+                style={{maxWidth:260}}
+              />
+              <button className="btn btn-outline-primary btn-sm" onClick={load} disabled={loading || stuLoading}>
                 {loading ? (<><span className="spinner-border spinner-border-sm me-2" />Calcul…</>) : "Actualiser"}
               </button>
             </div>
@@ -810,10 +933,10 @@ function BilanClasse({ classe, yearId, yearLabel }:{
 
       <div className="card border-0 shadow-sm">
         <div className="card-body">
-          {loading ? (
+          {(loading || stuLoading) ? (
             <div className="text-center py-5"><div className="spinner-border" /></div>
           ) : filtered.length === 0 ? (
-            <div className="text-muted">Aucune absence sur la période.</div>
+            <div className="text-muted">Aucun étudiant.</div>
           ) : (
             <div className="table-responsive">
               <table className="table align-middle">
@@ -822,26 +945,34 @@ function BilanClasse({ classe, yearId, yearLabel }:{
                     <th>#</th>
                     <th>Matricule</th>
                     <th>Nom & Prénom</th>
-                    <th>Classe</th>
-                    <th>Absences</th>
+                    <th>Cours manqués</th>
+                    <th>Heures manquées</th>
                     <th style={{width:120}}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((r, i) => (
-                    <tr key={r.matricule}>
-                      <td className="text-muted">{i+1}</td>
-                      <td className="text-muted">{r.matricule}</td>
-                      <td className="fw-semibold">{r.nom}</td>
-                      <td className="text-muted">{r.classe}</td>
-                      <td><span className="badge bg-danger-subtle text-danger">{r.count}</span></td>
-                      <td>
-                        <button className="btn btn-outline-secondary btn-sm" onClick={()=>setDetailFor({ matricule:r.matricule, nom:r.nom, classe:r.classe, items:r.details })}>
-                          Détails
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.map((r, i) => {
+                    const disabled = r.cours === 0;
+                    return (
+                      <tr key={r.matricule || i}>
+                        <td className="text-muted">{i+1}</td>
+                        <td className="text-muted">{r.matricule || "—"}</td>
+                        <td className="fw-semibold">{r.nom}</td>
+                        <td><span className={clsx("badge", r.cours>0 ? "bg-danger-subtle text-danger":"bg-secondary-subtle text-secondary")}>{r.cours}</span></td>
+                        <td className="text-muted">{formatMinutes(r.minutes)}</td>
+                        <td>
+                          <button
+                            className="btn btn-outline-secondary btn-sm"
+                            disabled={disabled}
+                            onClick={()=>!disabled && setDetailFor({ matricule:r.matricule, nom:r.nom, items:r.details })}
+                            title={disabled ? "Aucun détail à afficher" : "Voir détails"}
+                          >
+                            Détails
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -850,163 +981,6 @@ function BilanClasse({ classe, yearId, yearLabel }:{
       </div>
 
       {/* Modal détails */}
-      {detailFor && (
-        <DetailsModal
-          title={`Détails — ${detailFor.nom} (${detailFor.matricule})`}
-          onClose={()=>setDetailFor(null)}
-          items={detailFor.items}
-        />
-      )}
-    </>
-  );
-}
-
-/* ========================= Bilan global (toutes classes) ========================= */
-
-function GlobalBilanView({ academicYearId, academicYearLabel }:{ academicYearId:string; academicYearLabel:string; }) {
-  const today = new Date();
-  const [dateStart, setDateStart] = useState<string>(() => toISODate(addDays(today, -6)));
-  const [dateEnd, setDateEnd] = useState<string>(() => toISODate(today));
-  const [rows, setRows] = useState<Array<{matricule:string; nom:string; classe:string; count:number; details:(AbsenceEntry & {class_libelle:string; date:Date;})[]}>>([]);
-  const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
-  const [detailFor, setDetailFor] = useState<{matricule:string; nom:string; classe:string; items:(AbsenceEntry & {class_libelle:string; date:Date;})[]}|null>(null);
-
-  const quick = {
-    semaine: () => {
-      const d = new Date(); const dow = dayOfWeekLundi1(d);
-      const start = addDays(startOfDay(d), -(dow-1));
-      const end = addDays(start, 6);
-      setDateStart(toISODate(start)); setDateEnd(toISODate(end));
-    },
-    "30j": () => { setDateStart(toISODate(addDays(today, -29))); setDateEnd(toISODate(today)); },
-    "3m": () => { const s = new Date(today); s.setMonth(s.getMonth()-3); setDateStart(toISODate(s)); setDateEnd(toISODate(today)); },
-    "6m": () => { const s = new Date(today); s.setMonth(s.getMonth()-6); setDateStart(toISODate(s)); setDateEnd(toISODate(today)); },
-    annee: () => {
-      const [y1, y2] = academicYearLabel.split("-").map(Number);
-      const start = new Date(y1, 8, 1);
-      const end = new Date(y2, 7, 31);
-      setDateStart(toISODate(start)); setDateEnd(toISODate(end));
-    }
-  };
-
-  const load = async () => {
-    setLoading(true);
-    try{
-      const s = startOfDay(fromISODate(dateStart));
-      const e = endOfDay(fromISODate(dateEnd));
-
-      const snap = await getDocs(
-        query(
-          collection(db, "emargements"),
-          where("annee", "==", academicYearId),
-          where("date", ">=", s),
-          where("date", "<=", e)
-        )
-      );
-
-      const byMat: Record<string, { nom:string; classe:string; count:number; details:(AbsenceEntry & {class_libelle:string; date:Date;})[] }> = {};
-
-      snap.forEach((d) => {
-        const data = d.data() as SeanceDoc & Record<string, any>;
-        const classLib = data.class_libelle;
-        const dateVal = (data.date?.toDate?.() ?? data.date) as Date;
-
-        for (const k of Object.keys(data)) {
-          const val = (data as any)[k];
-          if (Array.isArray(val)) {
-            const list = val as AbsenceEntry[];
-            if (!byMat[k]) byMat[k] = { nom: list[0]?.nom_complet || "—", classe: classLib, count: 0, details: [] };
-            byMat[k].count += list.length;
-            byMat[k].details.push(...list.map(x => ({ ...x, class_libelle: classLib, date: dateVal })));
-          }
-        }
-      });
-
-      const arr = Object.entries(byMat).map(([mat, v]) => ({ matricule: mat, nom: v.nom, classe: v.classe, count: v.count, details: v.details }));
-      arr.sort((a,b)=> b.count - a.count || a.nom.localeCompare(b.nom,"fr",{sensitivity:"base"}));
-      setRows(arr);
-    } finally { setLoading(false); }
-  };
-
-  useEffect(()=>{ load(); /* eslint-disable-next-line */ }, [dateStart, dateEnd, academicYearId]);
-
-  const filtered = useMemo(()=>{
-    if(!search.trim()) return rows;
-    const q = search.toLowerCase();
-    return rows.filter(r => r.matricule.toLowerCase().includes(q) || r.nom.toLowerCase().includes(q) || r.classe.toLowerCase().includes(q));
-  }, [rows, search]);
-
-  return (
-    <>
-      <div className="card border-0 shadow-sm mb-3">
-        <div className="card-body">
-          <div className="row g-3 align-items-end">
-            <div className="col-md-3">
-              <label className="form-label mb-1">Du</label>
-              <input type="date" className="form-control" value={dateStart} onChange={(e)=>setDateStart(e.target.value)} />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label mb-1">Au</label>
-              <input type="date" className="form-control" value={dateEnd} onChange={(e)=>setDateEnd(e.target.value)} />
-            </div>
-            <div className="col-md-6 d-flex gap-2">
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick.semaine}>Semaine</button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick["30j"]}>30 jours</button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick["3m"]}>3 mois</button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick["6m"]}>6 mois</button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={quick.annee}>Année scolaire</button>
-              <div className="ms-auto" />
-              <input className="form-control" placeholder="Rechercher (matricule, nom, classe)" value={search} onChange={(e)=>setSearch(e.target.value)} style={{maxWidth:280}} />
-              <button className="btn btn-outline-primary btn-sm" onClick={load} disabled={loading}>
-                {loading ? (<><span className="spinner-border spinner-border-sm me-2" />Calcul…</>) : "Actualiser"}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="card border-0 shadow-sm">
-        <div className="card-body">
-          {loading ? (
-            <div className="text-center py-5"><div className="spinner-border" /></div>
-          ) : filtered.length === 0 ? (
-            <div className="text-muted">Aucune absence sur la période.</div>
-          ) : (
-            <div className="table-responsive">
-              <table className="table align-middle">
-                <thead className="table-light">
-                  <tr>
-                    <th>#</th>
-                    <th>Matricule</th>
-                    <th>Nom & Prénom</th>
-                    <th>Classe (dernière vue)</th>
-                    <th>Absences</th>
-                    <th style={{width:120}}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((r, i) => (
-                    <tr key={r.matricule}>
-                      <td className="text-muted">{i+1}</td>
-                      <td className="text-muted">{r.matricule}</td>
-                      <td className="fw-semibold">{r.nom}</td>
-                      <td className="text-muted">{r.classe}</td>
-                      <td><span className="badge bg-danger-subtle text-danger">{r.count}</span></td>
-                      <td>
-                        <button className="btn btn-outline-secondary btn-sm" onClick={()=>setDetailFor({ matricule:r.matricule, nom:r.nom, classe:r.classe, items:r.details })}>
-                          Détails
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
       {detailFor && (
         <DetailsModal
           title={`Détails — ${detailFor.nom} (${detailFor.matricule})`}
