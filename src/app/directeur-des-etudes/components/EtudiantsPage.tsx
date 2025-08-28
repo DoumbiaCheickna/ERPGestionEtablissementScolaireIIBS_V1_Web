@@ -33,6 +33,14 @@ type TClasse = {
 };
 
 type TParcoursEntry = { annee: string; classe: string; class_id: string | null };
+type TNextAssignment = {
+  year_id: string;        // ex: "2025-2026"
+  year_label: string;     // ex: "2025-2026"
+  class_id: string;
+  class_label: string;
+  effective_start?: string; // "YYYY-MM-DD" (date_debut de l'année ciblée)
+  created_at: number;       // Date.now()
+};
 
 type TUser = {
   id: string; // = uid si créé via Auth
@@ -86,6 +94,7 @@ type TUser = {
   transport?: { moyen?: string; temps_campus?: string };
 
   documents?: { copie_bac?: string|null; copie_cni?: string|null; releve_notes?: string|null };
+  next_assignment?: TNextAssignment | null;
 };
 
 type TNiveauDoc = { id: string; libelle: string };
@@ -97,6 +106,9 @@ type TPart = { id: string; libelle: string };
 const keyForParcours = (yearId: string, classId: string) => `${yearId}__${classId}`;
 const clsx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(' ');
 const onlyDigits = (s: string) => s.replace(/\D/g, '');
+const toISODate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
 
 /* ========================= Composant principal ========================= */
 
@@ -387,9 +399,31 @@ export default function EtudiantsPage() {
         const nextKeys = new Set<string>([...(targetUser.parcours_keys ?? [])]);
         nextKeys.add(newKey);
 
+        // Lire libellé de l'année et sa date_debut
+        const yMetaDoc = await getDoc(doc(db, 'annees_scolaires', reinscYear));
+        const yearLabel = years.find(y => y.id === reinscYear)?.label || '';
+        let effectiveStartISO: string | undefined = undefined;
+        if (yMetaDoc.exists()) {
+          const yv = yMetaDoc.data() as any;
+          const sd = yv.date_debut?.toDate?.() as Date | undefined;
+          if (sd) effectiveStartISO = toISODate(sd);
+        }
+
+        // Construire la prochaine affectation (marquage d’avenir)
+        const nextAssign: TNextAssignment = {
+          year_id: reinscYear,
+          year_label: yearLabel,
+          class_id: target.id,
+          class_label: target.libelle,
+          effective_start: effectiveStartISO, // facultatif si non renseigné côté année
+          created_at: Date.now(),
+        };
+
+
         await updateDoc(ref, {
           parcours: nextParcours,
-          parcours_keys: Array.from(nextKeys)
+          parcours_keys: Array.from(nextKeys),
+          next_assignment: nextAssign,
         });
 
         ok('Réinscription effectuée.');
@@ -477,7 +511,6 @@ export default function EtudiantsPage() {
             )}
           </div>
         </div>
-
         {/* Modal AJOUT étudiant */}
         {showAddStudent && (
           <>
