@@ -1,3 +1,4 @@
+// src/app/directeur-des-etudes/layout.tsx
 import type { Metadata } from "next";
 import { AcademicYearProvider } from "./context/AcademicYearContext";
 
