@@ -160,8 +160,7 @@ export default function HomeDashboard() {
         <div>
           <h5 className="mb-1">Bienvenue</h5>
           <small className="text-muted">
-            Choisissez l’année académique. Toutes les données (filières, classes, matières, EDT, étudiants…)
-            s’alignent automatiquement sur l’année sélectionnée.
+            Choisissez l’année académique.
           </small>
         </div>
 
@@ -225,10 +224,6 @@ export default function HomeDashboard() {
             {(selected as any)?.timezone ? (
               <span> • TZ <code>{(selected as any).timezone}</code></span>
             ) : null}
-          </div>
-          <div className="small text-muted mt-2">
-            Dès que vous créez une filière, une classe, une UE, une matière ou un emploi du temps,
-            l’année <strong>{selected?.label || '—'}</strong> est enregistrée et utilisée pour tous les filtres.
           </div>
         </div>
       </div>

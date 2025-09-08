@@ -17,6 +17,15 @@ type MainItem =
 
 const MAIN_MENU: MainItem[] = ["Accueil","Emargements","Etudiants","Professeurs","Filières","Evaluations"];
 
+const ICONS: Record<MainItem, string> = {
+  Accueil: "bi-house-door",
+  Emargements: "bi-clipboard-check",
+  Etudiants: "bi-people",
+  Professeurs: "bi-person-badge",
+  Filières: "bi-layers",
+  Evaluations: "bi-bar-chart",
+};
+
 type UserInfo = {
   docId: string;
   prenom: string;
@@ -35,7 +44,18 @@ export default function AdminNavbar({
 }) {
   const router = useRouter();
 
-  // ---------- Dropdown avatar (100% React) ----------
+  // Réserver la place de la sidebar en desktop
+  React.useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.body.classList.add("with-admin-sidebar");
+      return () => document.body.classList.remove("with-admin-sidebar");
+    }
+  }, []);
+
+  // Drawer mobile
+  const [openDrawer, setOpenDrawer] = React.useState(false);
+
+  // Dropdown avatar (topbar)
   const [openMenu, setOpenMenu] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -45,7 +65,7 @@ export default function AdminNavbar({
       if (!menuRef.current.contains(e.target as Node)) setOpenMenu(false);
     }
     function onEsc(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpenMenu(false);
+      if (e.key === "Escape") { setOpenMenu(false); setOpenDrawer(false); }
     }
     document.addEventListener("click", onDocClick);
     document.addEventListener("keydown", onEsc);
@@ -55,7 +75,7 @@ export default function AdminNavbar({
     };
   }, []);
 
-  // ---------- Modal "Informations personnelles" ----------
+  // Profil
   const [showProfile, setShowProfile] = React.useState(false);
   const [loadingProfile, setLoadingProfile] = React.useState(false);
   const [savingPwd, setSavingPwd] = React.useState(false);
@@ -158,99 +178,102 @@ export default function AdminNavbar({
 
   return (
     <>
-      <nav className="navbar navbar-expand-lg bg-white border-bottom sticky-top" style={{ height: 64 }}>
-        <div className="container-fluid">
-          {/* Logo */}
-          <a className="navbar-brand d-flex align-items-center" href="#">
-            <img src="/iibs-logo-without-bg.png" alt="IIBS" width={100} height={100}
-              className="me-2" style={{ height: 80, width: "auto", objectFit: "contain" }} />
-          </a>
-
-          {/* Burger */}
-          <button className="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#adminNavbarContent">
-            <span className="navbar-toggler-icon"></span>
+      {/* ===== TOPBAR ===== */}
+      <header className="topbar">
+        <div className="container-fluid h-100 d-flex align-items-center gap-2">
+          {/* Burger mobile */}
+          <button className="btn btn-light d-lg-none me-1" onClick={() => setOpenDrawer(true)} aria-label="Ouvrir le menu">
+            <i className="bi bi-list" />
           </button>
 
-          <div className="collapse navbar-collapse" id="adminNavbarContent">
-            {/* Menu principal */}
-            <ul className="navbar-nav me-auto mb-2 mb-lg-0 nav-main">
-              {MAIN_MENU.map((item) => (
-                <li className="nav-item" key={item}>
-                  <button
-                    className={`btn nav-link px-3 ${active === item ? "active" : ""}`}
-                    onClick={() => onChange(item)}
-                  >
-                    {item}
-                  </button>
-                </li>
-              ))}
-            </ul>
+          {/* Recherche (séparée) */}
+          <form className="flex-grow-1" role="search" onSubmit={(e) => e.preventDefault()}>
+            <div className="input-group search-pill">
+              <span className="input-group-text border-0 bg-transparent ps-3"><i className="bi bi-search" /></span>
+              <input className="form-control border-0 bg-transparent" placeholder="Rechercher…" />
+            </div>
+          </form>
 
-            {/* Recherche */}
-            <form className="d-flex me-3" role="search" onSubmit={(e) => e.preventDefault()}>
-              <div className="input-group">
-                <span className="input-group-text bg-white">
-                  <i className="bi bi-search"></i>
-                </span>
-                <input className="form-control" type="search" placeholder="Rechercher…" aria-label="Search" />
-              </div>
-            </form>
+          {/* Bouton notif séparé */}
+          <button className="btn btn-icon" title="Notifications">
+            <i className="bi bi-bell" />
+          </button>
 
-            {/* Notifications */}
-            <button className="btn btn-outline-secondary me-3" title="Notifications">
-              <i className="bi bi-bell"></i>
+          {/* Avatar + menu */}
+          <div className="position-relative" ref={menuRef}>
+            <button
+              className="btn btn-avatar"
+              onClick={() => setOpenMenu((s) => !s)}
+              aria-haspopup="menu"
+              aria-expanded={openMenu}
+            >
+              <img src="/avatar-woman.png" alt="Profil" width={34} height={34} className="rounded-circle me-2" />
+              <span className="d-none d-md-inline">Directeur</span>
+              <i className="bi bi-caret-down-fill ms-2" />
             </button>
 
-            {/* Avatar dropdown (React) */}
-            <div className="position-relative" ref={menuRef}>
-              <button
-                className="btn btn-light d-flex align-items-center"
-                onClick={() => setOpenMenu((s) => !s)}
-                aria-haspopup="menu"
-                aria-expanded={openMenu}
+            {openMenu && (
+              <div
+                className="dropdown-menu dropdown-menu-end show shadow"
+                style={{ position: "absolute", right: 0, top: "100%", zIndex: 1050, minWidth: 240 }}
+                role="menu"
               >
-                <img src="/avatar-placeholder.png" alt="Profil" width={32} height={32} className="rounded-circle me-2" />
-                <span className="d-none d-sm-inline">Directeur</span>
-                <i className="bi bi-caret-down-fill ms-2"></i>
-              </button>
-
-              {openMenu && (
-                <div
-                  className="dropdown-menu dropdown-menu-end show shadow"
-                  style={{ position: "absolute", right: 0, top: "100%", zIndex: 1050 }}
-                  role="menu"
-                >
-                  <button className="dropdown-item" onClick={openProfile}>
-                    <i className="bi bi-person-badge me-2" /> Informations personnelles
-                  </button>
-                  <button className="dropdown-item" disabled>
-                    <i className="bi bi-sliders me-2" /> Préférences
-                  </button>
-                  <button className="dropdown-item" disabled>
-                    <i className="bi bi-life-preserver me-2" /> Assistance
-                  </button>
-                  <div className="dropdown-divider" />
-                  <button className="dropdown-item text-danger" onClick={handleLogout}>
-                    <i className="bi bi-box-arrow-right me-2" /> Déconnexion
-                  </button>
-                </div>
-              )}
-            </div>
+                <button className="dropdown-item" onClick={openProfile}>
+                  <i className="bi bi-person-badge me-2" /> Informations personnelles
+                </button>
+                <button className="dropdown-item" disabled>
+                  <i className="bi bi-sliders me-2" /> Préférences
+                </button>
+                <button className="dropdown-item" disabled>
+                  <i className="bi bi-life-preserver me-2" /> Assistance
+                </button>
+                <div className="dropdown-divider" />
+                <button className="dropdown-item text-danger" onClick={handleLogout}>
+                  <i className="bi bi-box-arrow-right me-2" /> Déconnexion
+                </button>
+              </div>
+            )}
           </div>
         </div>
+      </header>
+      <div className="topbar-spacer" />
 
-        <style jsx>{`
-          .nav-main .nav-link { border-radius: 10px; padding: .5rem 1rem; color: #495057; transition: all .2s ease; }
-          .nav-main .nav-link:hover { background: #f1f3f5; }
-          .nav-main .nav-link.active { background: #0d6efd10; color: #0d6efd; font-weight: 600; position: relative; }
-          .nav-main .nav-link.active::after {
-            content: ""; position: absolute; left: 10%; right: 10%; bottom: -14px; height: 3px;
-            border-radius: 3px; background: #0d6efd;
-          }
-        `}</style>
-      </nav>
+      {/* ===== SIDEBAR (primaire) ===== */}
+      <aside className={`admin-sidebar ${openDrawer ? "open" : ""}`} aria-label="Sidebar">
+        <div className="sidebar-header">
+          <img src="/iibs-logo.png" alt="IIBS" className="sidebar-logo" />
+        </div>
 
-      {/* Modal profil contrôlé en React (pas de JS Bootstrap requis) */}
+        <nav className="sidebar-menu" role="menu">
+          {MAIN_MENU.map((item) => (
+            <button
+              key={item}
+              className={`sidebar-item ${active === item ? "active" : ""}`}
+              onClick={() => { onChange(item); setOpenDrawer(false); }}
+              role="menuitem"
+            >
+              <i className={`${ICONS[item]} me-2`} />
+              <span>{item}</span>
+              {active === item && <i className="bi bi-chevron-right ms-auto" />}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <button className="sidebar-utility w-100" onClick={handleLogout}>
+            <i className="bi bi-box-arrow-right me-2" /> Déconnexion
+          </button>
+        </div>
+      </aside>
+
+      {/* Overlay mobile */}
+      <div
+        className={`sidebar-overlay ${openDrawer ? "show" : ""}`}
+        onClick={() => setOpenDrawer(false)}
+        aria-hidden={!openDrawer}
+      />
+
+      {/* ===== Modal profil ===== */}
       {showProfile && (
         <>
           <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
@@ -341,6 +364,162 @@ export default function AdminNavbar({
           <div className="modal-backdrop fade show" onClick={() => setShowProfile(false)} />
         </>
       )}
+
+      {/* ======= Styles ======= */}
+      <style jsx>{`
+        /* Fond d'application assorti au thème (très clair) + coins arrondis visibles */
+        :global(html, body) {
+          background: #eaf2ff;  /* dérivé de #0D6EFD très clair */
+        }
+
+        /* Espace réservé pour la sidebar en desktop (230px + 24px de marge latérale) */
+        :global(body.with-admin-sidebar) {
+          padding-left: calc(230px + 24px);
+        }
+
+        /* TOPBAR arrondie */
+        /* TOPBAR — FIXE */
+        .topbar {
+          position: fixed;
+          top: 12px;
+          /* = sidebar 230 + marge latérale 24 + marge visuelle 12 */
+          left: calc(230px + 24px + 12px);
+          right: 12px;
+          height: 64px;
+          background: #ffffff;
+          border: 1px solid #e6ebf3;
+          border-radius: 16px;
+          box-shadow: 0 2px 8px rgba(13,110,253,0.05);
+          z-index: 1060; /* au-dessus du contenu */
+          margin: 0;     /* les margins n'agissent pas sur fixed */
+        }
+
+        /* Cale pour laisser la place à la topbar (64 + 24 de respiration) */
+        .topbar-spacer { height: 88px; }
+
+        /* Mobile / tablette : la sidebar se replie, la topbar prend tout */
+        @media (max-width: 991.98px) {
+          .topbar {
+            left: 12px;
+            right: 12px;
+            top: 8px;
+            border-radius: 12px;
+          }
+          .topbar-spacer { height: 80px; }
+        }
+
+        .search-pill {
+          background: #f7f9fc;
+          border: 1px solid #e6ebf3;
+          border-radius: 9999px;
+          overflow: hidden;
+        }
+        .search-pill .form-control { box-shadow: none; padding-top: .6rem; padding-bottom: .6rem; }
+        .btn-icon {
+          background: #fff; border: 1px solid #e6ebf3; border-radius: 12px; padding: .5rem .65rem;
+        }
+        .btn-icon:hover { background: #f3f6fb; }
+        .btn-avatar { background: #fff; border: 1px solid #e6ebf3; border-radius: 12px; padding: .35rem .6rem; }
+        .btn-avatar:hover { background: #f3f6fb; }
+
+        /* SIDEBAR avec coins arrondis et même fond autour */
+        .admin-sidebar {
+          position: fixed;
+          top: 12px; left: 12px; bottom: 12px;   /* marges pour afficher l'arrondi */
+          width: 230px;
+          background: linear-gradient(180deg, #0D6EFD 0%, #0b5ed7 100%);
+          color: #fff;
+          display: flex;
+          flex-direction: column;
+          z-index: 1045;
+          border: 0;
+          border-radius: 18px;
+          overflow: hidden;                       /* pour que l'arrondi s'applique à l'intérieur */
+          transition: transform .25s ease;
+          box-shadow: 0 10px 24px rgba(13,110,253,.12); /* doux, pas “moche” */
+        }
+
+        .sidebar-header {
+          padding: 1rem .9rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 104px;
+          border-bottom: 1px solid rgba(255,255,255,.12);
+        }
+        .sidebar-logo {
+          height: 92px;   /* logo bien visible */
+          width: auto;
+          object-fit: contain;
+        }
+
+        .sidebar-menu {
+          padding: .6rem;
+          display: flex;
+          flex-direction: column;
+          gap: .35rem;
+          overflow: auto;
+        }
+
+        .sidebar-item {
+          appearance: none;
+          border: 1px solid transparent;
+          background: rgba(255,255,255,.06);
+          color: #e7eeff;
+          text-align: left;
+          padding: .48rem .72rem;         /* plus compact */
+          border-radius: 12px;
+          font-weight: 500;
+          font-size: .93rem;               /* texte un peu plus petit */
+          cursor: pointer;
+          transition: background .2s ease, color .2s ease, border-color .2s ease;
+          display: flex; align-items: center; gap: .5rem;
+        }
+        .sidebar-item:hover { background: rgba(255,255,255,.12); color: #ffffff; }
+        .sidebar-item.active {
+          background: #ffffff;
+          color: #0D6EFD;
+          border-color: #e8f0ff;
+        }
+
+        .sidebar-footer {
+          margin-top: auto;
+          padding: .75rem;
+          border-top: 1px solid rgba(255,255,255,.15);
+          display: grid; gap: .5rem;
+          background: transparent;
+        }
+        .sidebar-utility {
+          background: rgba(255,255,255,.1);
+          color: #fff;
+          border: 1px solid rgba(255,255,255,.15);
+          padding: .5rem .75rem;
+          border-radius: 12px;
+          text-align: left;
+        }
+        .sidebar-utility:hover { background: rgba(255,255,255,.18); }
+
+        /* Arrondis et fond pour le contenu principal — ajoute className="app-main" à ton <main> */
+        :global(main.app-main) {
+          background: #ffffff;
+          border: 1px solid #e6ebf3;
+          border-radius: 16px;
+          margin: 12px;                   /* même marge que topbar et sidebar */
+          padding: 16px;
+          box-shadow: 0 6px 20px rgba(13,110,253,0.06);
+        }
+
+        /* Drawer mobile */
+        @media (max-width: 991.98px) {
+          :global(body.with-admin-sidebar) { padding-left: 0; }
+          .admin-sidebar { transform: translateX(-100%); left: 0; right: auto; width: 82vw; max-width: 320px; border-radius: 0; top: 0; bottom: 0; margin: 0; }
+          .admin-sidebar.open { transform: translateX(0); }
+          .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1040; }
+          .sidebar-overlay.show { display: block; }
+          .topbar { margin: 0; border-radius: 0; }
+          :global(main.app-main) { margin: 8px; border-radius: 12px; }
+        }
+      `}</style>
     </>
   );
 }
