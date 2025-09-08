@@ -10,6 +10,7 @@ import { db } from '../../../../firebaseConfig';
 import { useAcademicYear } from '../context/AcademicYearContext';
 import Toast from '../../admin/components/ui/Toast';
 import StudentForm from '../../admin/pages/users/etudiantForm';
+import styles from "./Filiere.module.css";
 
 /* ========================= Types ========================= */
 
@@ -139,6 +140,12 @@ export default function EtudiantsPage() {
 
   // Quand on ouvre une classe : vue étudiants
   const [openedClasse, setOpenedClasse] = useState<TClasse | null>(null);
+
+  // Helpers de navigation pour le breadcrumb / onglets
+  const goRoot = () => { setOpenedClasse(null); setSelectedFiliere(null); };
+  const goSection = (s: SectionKey) => { setSection(s); setSelectedFiliere(null); setOpenedClasse(null); };
+  const goFiliere = () => { setOpenedClasse(null); };
+
 
   // Pour formulaire d’ajout étudiant
   const [roles, setRoles] = useState<TRole[]>([]);
@@ -658,200 +665,209 @@ export default function EtudiantsPage() {
 
   return (
     <div className="container-fluid py-3">
+      {/* Fil d’Ariane discret */}
+       <nav
+          aria-label="breadcrumb"
+          className="mb-1"
+          style={{ ['--bs-breadcrumb-divider' as any]: "'>'" }}  // chevron
+        >
+          <ol className="breadcrumb small mb-0">
+            <li className="breadcrumb-item">
+              <a href="#" className="text-decoration-none"
+                onClick={(e)=>{e.preventDefault(); goRoot();}}>Étudiants</a>
+            </li>
+            <li className="breadcrumb-item">
+              <a href="#" className="text-decoration-none"
+                onClick={(e)=>{e.preventDefault(); goSection(section);}}>
+                {section}
+              </a>
+            </li>
+            {selectedFiliere && (
+              <li className="breadcrumb-item">
+                <a href="#" className="text-decoration-none"
+                  onClick={(e)=>{e.preventDefault(); goFiliere();}}>
+                  {selectedFiliere.libelle}
+                </a>
+              </li>
+            )}
+            {openedClasse && (
+              <li className="breadcrumb-item active" aria-current="page">
+                {openedClasse.libelle}
+              </li>
+            )}
+          </ol>
+        </nav>
 
-      <div className="row">
-        {/* === MENU LATERAL === */}
-        <aside className="col-12 col-md-3 col-lg-2 mb-3 mb-md-0">
-          <div className="card border-0 shadow-sm">
-            <div className="card-body p-2">
-              <div className="list-group list-group-flush">
-                {(['Gestion','Informatique'] as SectionKey[]).map(s => (
-                  <button
-                    key={s}
-                    className={clsx(
-                      'list-group-item list-group-item-action rounded-2 my-1',
-                      s === section
-                        ? 'bg-primary text-white border-0'
-                        : 'bg-light border text-dark'
-                    )}
-                    onClick={() => { setSection(s); setOpenedClasse(null); }}
-                  >
-                    <i className={clsx('me-2', s === 'Gestion' ? 'bi bi-briefcase' : 'bi bi-pc-display')} />
-                    {s}
-                  </button>
-                ))}
-              </div>
 
-              <div className="mt-3 small">
-                <div className="text-muted">Année sélectionnée</div>
-                <div className="fw-semibold">{academicYearLabel || '—'}</div>
-              </div>
-            </div>
+      {/* Titre + année + actions */}
+      <div className="d-flex align-items-center justify-content-between mb-2">
+        <div>
+          <h2 className="mb-0">Étudiants</h2>
+          <div className="text-muted small">Année : <strong>{academicYearLabel || '—'}</strong></div>
+        </div>
+
+        <div className="d-flex align-items-center gap-2">
+          {/* Onglets horizontaux Gestion / Informatique */}
+          <div className="btn-group me-2" role="tablist" aria-label="Sections">
+            {(['Gestion','Informatique'] as SectionKey[]).map(s => (
+              <button
+                key={s}
+                type="button"
+                className={clsx('btn btn-sm', s === section ? 'btn-primary' : 'btn-outline-primary')}
+                aria-selected={s === section}
+                onClick={() => goSection(s)}
+              >
+                <i className={clsx('me-2', s === 'Gestion' ? 'bi bi-briefcase' : 'bi bi-pc-display')} />
+                {s}
+              </button>
+            ))}
           </div>
-        </aside>
 
-        {/* === CONTENU === */}
-        <main className="col-12 col-md-9 col-lg-10">
-          <div className="d-flex align-items-center justify-content-between mb-2">
-            <div>
-              <h2 className="mb-0">Étudiants</h2>
-              <div className="text-muted">Année : <strong>{academicYearLabel || '—'}</strong></div>
-            </div>
-            <button className="btn btn-outline-secondary btn-sm" onClick={() => { setSelectedFiliere(f => f ? { ...f } : f); }}>
-              Actualiser vue
-            </button>
-          </div>
+          <button
+            className="btn btn-outline-secondary btn-sm"
+            onClick={() => { setSelectedFiliere(f => f ? { ...f } : f); }}
+          >
+            Actualiser vue
+          </button>
+        </div>
+      </div>
 
-          {/* Si une classe est ouverte : vue étudiants */}
-          {openedClasse ? (
-            <ClasseStudentsView
-              classe={openedClasse}
-              onBack={() => setOpenedClasse(null)}
-            />
-          ) : (
-            <>
-              {/* FILIERES */}
-              <div className="card border-0 shadow-sm mb-3">
-                <div className="card-body">
-                  <h5 className="mb-3">Filières — {section}</h5>
-
-                  {filieres.length === 0 ? (
-                    <div className="text-muted">Aucune filière pour cette section et cette année.</div>
-                  ) : (
-                    <div className="filiere-grid">
-                      {filieres.map(f => {
-                        const active = selectedFiliere?.id === f.id;
-                        return (
-                          <button
-                            key={f.id}
-                            className={clsx(
-                              "filiere-card card shadow-sm border-2 rounded-4 text-start",
-                              active ? "border-primary" : "border-0"
-                            )}
-                            onClick={() => setSelectedFiliere(f)}
-                          >
-                            <div className="icon">
-                              <i className="bi bi-mortarboard fs-5 text-primary" />
-                            </div>
-                            <div className="flex-grow-1">
-                              <div className="fw-semibold filiere-title">{f.libelle}</div>
-                              <div className="text-muted small">Année {academicYearLabel}</div>
-                            </div>
-                            {active && <i className="bi bi-check-circle-fill text-primary ms-2" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+      {/* Si une classe est ouverte : vue étudiants */}
+      {openedClasse ? (
+        <ClasseStudentsView
+          classe={openedClasse}
+          onBack={() => setOpenedClasse(null)}
+        />
+      ) : (
+        <>
+          {/* FILIERES */}
+          <div className="card border-0 shadow-sm mb-3">
+            <div className="card-body">
+              <div className="d-flex align-items-center justify-content-between">
+                <h5 className="mb-3">Filières — {section}</h5>
+                {filieres.length > 0 && (
+                  <span className="small text-muted">{filieres.length} filière{filieres.length>1?'s':''}</span>
+                )}
               </div>
 
-              <style jsx>{`
-                .filiere-grid {
-                  display: grid;
-                  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-                  gap: 12px;
-                }
-                .filiere-card {
-                  display: flex;
-                  align-items: center;
-                  gap: 12px;
-                  padding: 16px;
-                  background: #fff;
-                  height: 100%;
-                  min-height: 92px;
-                }
-                .icon {
-                  width: 44px; height: 44px;
-                  display: flex; align-items: center; justify-content: center;
-                  border-radius: 12px;
-                  background: rgba(13,110,253,.1);
-                  flex: 0 0 44px;
-                }
-                .filiere-title {
-                  white-space: normal;
-                  word-break: break-word;
-                }
-              `}</style>
+              {filieres.length === 0 ? (
+                <div className="text-muted">Aucune filière pour cette section et cette année.</div>
+              ) : (
+                 <div className={styles.filiereGrid}>
+                    {filieres.map(f => {
+                      const active = selectedFiliere?.id === f.id;
+                      return (
+                        <button
+                          key={f.id}
+                          className={clsx(styles.filiereCard, active && styles.isActive)}
+                          onClick={() => setSelectedFiliere(f)}
+                          title={f.libelle}
+                        >
+                          <span className={styles.icon}>
+                            <i className="bi bi-mortarboard" />
+                          </span>
 
-              {/* CLASSES */}
-              <div className="card border-0 shadow-sm">
-                <div className="card-body">
-                  <div className="d-flex align-items-center justify-content-between mb-2">
-                    <h5 className="mb-0">
-                      {selectedFiliere ? `Classes — ${selectedFiliere.libelle}` : 'Classes'}
-                    </h5>
-                    {classes.length > 0 && (
-                      <div className="small text-muted">
-                        {classes.length} classe{classes.length>1?'s':''} • page {clsPage}/{totalPages}
-                      </div>
-                    )}
+                          <span className={styles.content}>
+                            <span className={styles.title}>{f.libelle}</span>
+                            <span className={styles.subtitle}>Année {academicYearLabel}</span>
+                          </span>
+
+                          {active && (
+                            <span className={styles.check}>
+                              <i className="bi bi-check2" />
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
+              )}
+            </div>
+          </div>
+          {/* CLASSES */}
+          <div className="card border-0 shadow-sm">
+            <div className="card-body">
+              <div className="d-flex align-items-center justify-content-between mb-2">
+                <h5 className="mb-0">
+                  {selectedFiliere ? `Classes — ${selectedFiliere.libelle}` : 'Classes'}
+                </h5>
+                {classes.length > 0 && (
+                  <div className="small text-muted">
+                    {classes.length} classe{classes.length>1?'s':''} • page {clsPage}/{totalPages}
+                  </div>
+                )}
+              </div>
 
-                  {clsLoading ? (
-                    <div className="text-center py-5"><div className="spinner-border" /></div>
-                  ) : classes.length === 0 ? (
-                    <div className="text-muted">Aucune classe.</div>
-                  ) : (
-                    <>
-                      <div className="row g-3">
-                        {paginatedClasses.map(c => (
-                          <div key={c.id} className="col-12 col-md-6 col-lg-4 d-flex align-items-stretch">
-                            <div className="card shadow-sm border-0 rounded-3 p-3 h-100 w-100">
-                              <div className="card-body d-flex flex-column">
-                                <div className="mb-2">
-                                  <div className="fw-bold text-primary text-truncate" title={c.libelle}>
-                                    {c.libelle}
-                                  </div>
-                                  <div className="text-muted small">{c.niveau_libelle}</div>
-                                </div>
-
-                                <div className="mt-auto d-flex flex-column gap-2">
-                                  <button
-                                    className="btn btn-outline-secondary w-100"
-                                    onClick={() => setOpenedClasse(c)}
-                                  >
-                                    Ouvrir la liste des étudiants
-                                  </button>
-                                </div>
+              {clsLoading ? (
+                <div className="text-center py-5"><div className="spinner-border" /></div>
+              ) : classes.length === 0 ? (
+                <div className="text-muted">Aucune classe.</div>
+              ) : (
+                <>
+                  <div className="row g-3">
+                    {paginatedClasses.map(c => (
+                      <div key={c.id} className="col-12 col-md-6 col-lg-4 d-flex align-items-stretch">
+                        <div className="card shadow-sm border-0 rounded-3 p-3 h-100 w-100">
+                          <div className="card-body d-flex flex-column">
+                            <div className="mb-2">
+                              <div className="fw-bold text-primary text-truncate" title={c.libelle}>
+                                {c.libelle}
                               </div>
+                              <div className="text-muted small">{c.niveau_libelle}</div>
+                            </div>
+                            <div className="mt-auto d-flex flex-column gap-2">
+                              <button
+                                className="btn btn-outline-secondary w-100"
+                                onClick={() => setOpenedClasse(c)}
+                              >
+                                Ouvrir la liste des étudiants
+                              </button>
                             </div>
                           </div>
-                        ))}
+                        </div>
                       </div>
+                    ))}
+                  </div>
 
-                      {/* pagination */}
-                      <div className="d-flex justify-content-end align-items-center gap-2 mt-3">
-                        <button
-                          className="btn btn-outline-secondary btn-sm"
-                          disabled={clsPage <= 1}
-                          onClick={() => setClsPage(p => Math.max(1, p - 1))}
-                        >
-                          Précédent
-                        </button>
-                        <span className="small text-muted">Page {clsPage} / {totalPages}</span>
-                        <button
-                          className="btn btn-outline-secondary btn-sm"
-                          disabled={clsPage >= totalPages}
-                          onClick={() => setClsPage(p => Math.min(totalPages, p + 1))}
-                        >
-                          Suivant
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-        </main>
-      </div>
+                  {/* pagination */}
+                  <div className="d-flex justify-content-end align-items-center gap-2 mt-3">
+                    <button
+                      className="btn btn-outline-secondary btn-sm"
+                      disabled={clsPage <= 1}
+                      onClick={() => setClsPage(p => Math.max(1, p - 1))}
+                    >
+                      Précédent
+                    </button>
+                    <span className="small text-muted">Page {clsPage} / {totalPages}</span>
+                    <button
+                      className="btn btn-outline-secondary btn-sm"
+                      disabled={clsPage >= totalPages}
+                      onClick={() => setClsPage(p => Math.min(totalPages, p + 1))}
+                    >
+                      Suivant
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Toasts globaux */}
       <Toast message={toastMsg} type="success" show={okShow} onClose={() => setOkShow(false)} />
       <Toast message={toastMsg} type="error" show={errShow} onClose={() => setErrShow(false)} />
+
+      {/* Chevrons du fil d’Ariane */}
+      <style jsx>{`
+        :global(.breadcrumb-item + .breadcrumb-item::before) {
+          content: ">";
+          padding-right: .3rem;
+        }
+      `}</style>
     </div>
   );
+    
 }
 
 /* ===== Modale VOIR — charge et affiche TOUT le doc ===== */
