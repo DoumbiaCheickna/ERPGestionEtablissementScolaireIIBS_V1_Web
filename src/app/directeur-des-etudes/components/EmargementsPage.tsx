@@ -90,27 +90,26 @@ type TUser = {
 type AbsenceEntry = {
   type: "absence";
   timestamp?: any;
-  annee: string;               // libellé "2024-2025" (dans tes objets)
+  annee: string;
   semestre: TSemestre;
   start: string;
   end: string;
   salle?: string;
   enseignant?: string;
-  matiereId?: string;          // présent dans tes exemples
-  matiere_id?: string;         // fallback
+  matiereId?: string;
+  matiere_id?: string;
   matiere_libelle: string;
   matricule: string;
   nom_complet: string;
 };
 
 type SeanceDoc = {
-  // métadonnées au root de chaque doc emargements
-  annee: string;               // id année (clé)
+  annee: string;
   class_id: string;
   class_libelle: string;
   semestre: TSemestre;
-  date: any;                   // Timestamp/Date = début de journée
-  day: number;                 // 1..6
+  date: any;
+  day: number;
   start: string;
   end: string;
   salle?: string;
@@ -149,8 +148,8 @@ const fromISODate = (s: string): Date => {
 };
 
 function dayOfWeekLundi1(date: Date): number {
-  const js = date.getDay(); // 0..6 (0=dim)
-  return ((js + 6) % 7) + 1; // 1..7
+  const js = date.getDay();
+  return ((js + 6) % 7) + 1;
 }
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
@@ -182,23 +181,21 @@ export default function EmargementsPage() {
   const academicYearId = selected?.id || "";
   const academicYearLabel = selected?.label || "";
 
-  // UI : section & sélections
+  /* --- UI state --- */
   const [section, setSection] = useState<SectionKey>("Gestion");
-
   const [filieres, setFilieres] = useState<TFiliere[]>([]);
   const [selectedFiliere, setSelectedFiliere] = useState<TFiliere | null>(null);
-
   const [classes, setClasses] = useState<TClasse[]>([]);
   const [openedClasse, setOpenedClasse] = useState<TClasse | null>(null);
 
-  // Toasts globaux
+  /* --- Toasts --- */
   const [toastMsg, setToastMsg] = useState("");
   const [okShow, setOkShow] = useState(false);
   const [errShow, setErrShow] = useState(false);
   const ok = (m: string) => { setToastMsg(m); setOkShow(true); };
   const ko = (m: string) => { setToastMsg(m); setErrShow(true); };
 
-  // Modal "Fermeture"
+  /* --- Fermeture modal state (inchangé) --- */
   const [showClosure, setShowClosure] = useState(false);
   const [closureStart, setClosureStart] = useState<string>("");
   const [closureEnd, setClosureEnd] = useState<string>("");
@@ -216,16 +213,14 @@ export default function EmargementsPage() {
     setClosureEndTime("");
     setClosureScope("global");
     setClosureLabel("");
-    setClosureSelected(classes.map(c => c.id)); // par défaut tout coché si on bascule en "classes"
+    setClosureSelected(classes.map(c => c.id));
     setShowClosure(true);
   };
-
   const toggleSelectAllClasses = () => {
     const allIds = classes.map(c => c.id);
     if (closureSelected.length === allIds.length) setClosureSelected([]);
     else setClosureSelected(allIds);
   };
-
   const saveClosure = async () => {
     if (!academicYearId) return ko("Sélectionnez une année.");
     if (!closureStart) return ko("Indiquez une date de début.");
@@ -292,6 +287,7 @@ export default function EmargementsPage() {
         rows.sort((a, b) => a.libelle.localeCompare(b.libelle));
         setFilieres(rows);
         setSelectedFiliere((prev) => (prev && rows.find((r) => r.id === prev.id)) ? prev : (rows[0] ?? null));
+        setOpenedClasse(null);
       } catch (e) { console.error(e); ko("Erreur de chargement des filières."); }
     };
     load();
@@ -330,95 +326,110 @@ export default function EmargementsPage() {
     load();
   }, [selectedFiliere]);
 
+  /* ---------- Breadcrumb actions ---------- */
+  const goRoot = () => { setOpenedClasse(null); setSelectedFiliere(null); };
+  const goSection = (s: SectionKey) => { setSection(s); setSelectedFiliere(null); setOpenedClasse(null); };
+  const goFiliere = () => { setOpenedClasse(null); };
+
   return (
     <div className="container-fluid py-3">
-      <div className="d-flex align-items-center justify-content-between mb-3">
+      {/* --- Fil d’Ariane (petit, discret) --- */}
+      <nav aria-label="breadcrumb" className="mb-1">
+        <ol className="breadcrumb small mb-0">
+          <li className="breadcrumb-item">
+            <a href="#" className="text-decoration-none" onClick={(e)=>{e.preventDefault(); goRoot();}}>Émargements</a>
+          </li>
+          <li className="breadcrumb-item">
+            <a href="#" className="text-decoration-none" onClick={(e)=>{e.preventDefault(); goSection(section);}}>
+              {section}
+            </a>
+          </li>
+          {selectedFiliere && (
+            <li className="breadcrumb-item">
+              <a href="#" className="text-decoration-none" onClick={(e)=>{e.preventDefault(); goFiliere();}}>
+                {selectedFiliere.libelle}
+              </a>
+            </li>
+          )}
+          {openedClasse && <li className="breadcrumb-item active" aria-current="page">{openedClasse.libelle}</li>}
+        </ol>
+      </nav>
+
+      {/* --- Titre + année --- */}
+      <div className="d-flex align-items-center justify-content-between mb-2">
         <div>
           <h2 className="mb-0">Émargements</h2>
-          <div className="text-muted">Année : <strong>{academicYearLabel || "—"}</strong></div>
+          <div className="text-muted small">Année : <strong>{academicYearLabel || "—"}</strong></div>
         </div>
       </div>
 
-      <div className="row">
-        {/* === MENU LATERAL === */}
-        <aside className="col-12 col-md-3 col-lg-2 mb-3 mb-md-0">
-          <div className="card border-0 shadow-sm">
-            <div className="card-body p-2">
-              <div className="list-group list-group-flush">
-                {(["Gestion", "Informatique"] as SectionKey[]).map((s) => (
-                  <button
-                    key={s}
-                    className={clsx(
-                      "list-group-item list-group-item-action rounded-2 my-1",
-                      s === section ? "bg-primary text-white border-0" : "bg-light border text-dark"
-                    )}
-                    onClick={() => { setSection(s); setOpenedClasse(null); }}
-                  >
-                    <i className={clsx("me-2", s === "Gestion" ? "bi bi-briefcase" : "bi bi-pc-display")} />
-                    {s}
-                  </button>
-                ))}
-              </div>
+      {/* --- Onglets horizontaux Gestion / Informatique --- */}
+      <div className="d-flex align-items-center justify-content-between flex-wrap mb-3">
+        <div className="btn-group" role="tablist" aria-label="Sections">
+          {(["Gestion", "Informatique"] as SectionKey[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={clsx("btn btn-sm", s === section ? "btn-primary" : "btn-outline-primary")}
+              aria-selected={s === section}
+              onClick={() => goSection(s)}
+            >
+              <i className={clsx("me-2", s === "Gestion" ? "bi bi-briefcase" : "bi bi-pc-display")} />
+              {s}
+            </button>
+          ))}
+        </div>
 
-              <div className="mt-3 small">
-                <div className="text-muted">Année sélectionnée</div>
-                <div className="fw-semibold">{academicYearLabel || "—"}</div>
-              </div>
-            </div>
-          </div>
-        </aside>
+        <div className="d-flex gap-2">
+          <button className="btn btn-outline-danger btn-sm" onClick={openClosure}>
+            <i className="bi bi-slash-circle me-1" /> Pas de cours (fermeture)
+          </button>
+          <button className="btn btn-outline-secondary btn-sm" onClick={() => setSelectedFiliere((f) => (f ? { ...f } : f))}>
+            Actualiser vue
+          </button>
+        </div>
+      </div>
 
-        {/* === CONTENU === */}
-        <main className="col-12 col-md-9 col-lg-10">
-          <div className="d-flex align-items-center justify-content-between mb-3">
-            <h5 className="mb-0">{selectedFiliere ? `Filière — ${selectedFiliere.libelle}` : "Filière"}</h5>
-            <div className="d-flex gap-2">
-              <button className="btn btn-outline-danger btn-sm" onClick={openClosure}>
-                <i className="bi bi-slash-circle me-1" /> Pas de cours (fermeture)
-              </button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={() => setSelectedFiliere((f) => (f ? { ...f } : f))}>
-                Actualiser vue
-              </button>
-            </div>
-          </div>
+      {/* --- En-tête filière --- */}
+      <div className="d-flex align-items-center justify-content-between mb-3">
+        <h5 className="mb-0">{selectedFiliere ? `Filière — ${selectedFiliere.libelle}` : "Filière"}</h5>
+      </div>
 
-          {/* CLASSES */}
-          {!openedClasse ? (
-            <div className="card border-0 shadow-sm">
-              <div className="card-body">
-                {classes.length === 0 ? (
-                  <div className="text-muted">Aucune classe.</div>
-                ) : (
-                  <div className="row g-3">
-                    {classes.map((c) => (
-                      <div key={c.id} className="col-12 col-md-6 col-lg-4 d-flex align-items-stretch">
-                        <div className="card shadow-sm border-0 rounded-3 p-3 h-100 w-100">
-                          <div className="card-body d-flex flex-column">
-                            <div className="mb-2">
-                              <div className="fw-bold text-primary text-truncate" title={c.libelle}>{c.libelle}</div>
-                              <div className="text-muted small">{c.niveau_libelle}</div>
-                            </div>
-                            <div className="mt-auto">
-                              <button className="btn btn-outline-secondary w-100" onClick={() => setOpenedClasse(c)}>
-                                Ouvrir (absents & bilan)
-                              </button>
-                            </div>
-                          </div>
+      {/* === CONTENU === */}
+      {!openedClasse ? (
+        <div className="card border-0 shadow-sm">
+          <div className="card-body">
+            {classes.length === 0 ? (
+              <div className="text-muted">Aucune classe.</div>
+            ) : (
+              <div className="row g-3">
+                {classes.map((c) => (
+                  <div key={c.id} className="col-12 col-md-6 col-lg-4 d-flex align-items-stretch">
+                    <div className="card shadow-sm border-0 rounded-3 p-3 h-100 w-100">
+                      <div className="card-body d-flex flex-column">
+                        <div className="mb-2">
+                          <div className="fw-bold text-primary text-truncate" title={c.libelle}>{c.libelle}</div>
+                          <div className="text-muted small">{c.niveau_libelle}</div>
+                        </div>
+                        <div className="mt-auto">
+                          <button className="btn btn-outline-secondary w-100" onClick={() => setOpenedClasse(c)}>
+                            Ouvrir (absents & bilan)
+                          </button>
                         </div>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                )}
+                ))}
               </div>
-            </div>
-          ) : (
-            <ClasseView
-              classe={openedClasse}
-              onBack={() => setOpenedClasse(null)}
-            />
-          )}
-        </main>
-      </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <ClasseView
+          classe={openedClasse}
+          onBack={() => setOpenedClasse(null)}
+        />
+      )}
 
       {/* Modal FERMETURE */}
       {showClosure && (
@@ -521,6 +532,14 @@ export default function EmargementsPage() {
       {/* toasts */}
       <Toast message={toastMsg} type="success" show={okShow} onClose={() => setOkShow(false)} />
       <Toast message={toastMsg} type="error" show={errShow} onClose={() => setErrShow(false)} />
+
+      {/* style: chevrons dans le breadcrumb */}
+      <style jsx>{`
+        :global(.breadcrumb-item + .breadcrumb-item::before) {
+          content: ">";
+          padding-right: .3rem;
+        }
+      `}</style>
     </div>
   );
 }
