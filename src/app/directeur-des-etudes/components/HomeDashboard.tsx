@@ -23,7 +23,11 @@ type TUser = {
   niveau_id?: 'L1'|'L2'|'L3'|'M1'|'M2'|string;
 };
 
-export default function HomeDashboard() {
+export default function HomeDashboard({
+  onOpenEtudiants,
+}: {
+  onOpenEtudiants?: () => void;
+}) {
   const { years, selected, setSelectedById, createYear, updateYear, loading } = useAcademicYear();
   const selectedLabel = selected?.label || '';
 
@@ -338,13 +342,26 @@ export default function HomeDashboard() {
             <i className="bi bi-plus-lg me-1" /> Créer une année
           </button>
 
-          <Link
-            href={ selectedLabel ? `/directeur-des-etudes/etudiants?annee=${encodeURIComponent(selectedLabel)}` : `/directeur-des-etudes/etudiants` }
+          <button
+            type="button"
             className="btn btn-primary btn-sm"
-            onClick={() => { if (selectedLabel) { try { localStorage.setItem('app.selectedAnnee', selectedLabel); } catch {} } }}
+            onClick={() => {
+              if (selectedLabel) {
+                try { localStorage.setItem('app.selectedAnnee', selectedLabel); } catch {}
+              }
+              // 👉 Déclenche la même action que le menu
+              if (onOpenEtudiants) {
+                onOpenEtudiants();
+              } else {
+                // fallback (au cas où le parent n’a pas passé le callback)
+                window.location.href = selectedLabel
+                  ? `/directeur-des-etudes/etudiants?annee=${encodeURIComponent(selectedLabel)}`
+                  : `/directeur-des-etudes/etudiants`;
+              }
+            }}
           >
             <i className="bi bi-people me-1" /> Ouvrir Étudiants
-          </Link>
+          </button>
         </div>
       </div>
 

@@ -20,3 +20,25 @@ export function routeForRole(roleLabel: string): string {
 
   return "/admin/home";
 }
+
+
+export type RoleName = "Admin" | "Directeur des études" | "Professeur" | "Etudiant" | string;
+
+export function isPathAllowedForRole(role: RoleName, path: string): boolean {
+  const p = (path || "").toLowerCase();
+  const r = (role || "").toLowerCase();
+
+  if (r.includes("admin")) return true; // admin partout
+
+  if (r.includes("directeur")) {
+    return p.startsWith("/directeur-des-etudes") || p.startsWith("/admin/auth");
+  }
+  if (r.includes("prof")) {
+    return p.startsWith("/prof") || p.startsWith("/admin/auth");
+  }
+  if (r.includes("etudiant")) {
+    return p.startsWith("/etudiant") || p.startsWith("/admin/auth");
+  }
+  // par défaut: seulement l’auth
+  return p.startsWith("/admin/auth");
+}

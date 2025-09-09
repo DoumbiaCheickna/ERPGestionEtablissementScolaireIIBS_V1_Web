@@ -5,7 +5,16 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "../../../../firebaseConfig";
 import { signOut, updatePassword } from "firebase/auth";
-import { collection, getDocs, query, where, doc, updateDoc } from "firebase/firestore";
+import NotificationsBell from "./NotificationsBell";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  doc,
+  updateDoc,
+  limit as fbLimit,
+} from "firebase/firestore";
 
 type MainItem =
   | "Accueil"
@@ -15,7 +24,14 @@ type MainItem =
   | "Filières"
   | "Evaluations";
 
-const MAIN_MENU: MainItem[] = ["Accueil","Emargements","Etudiants","Professeurs","Filières","Evaluations"];
+const MAIN_MENU: MainItem[] = [
+  "Accueil",
+  "Emargements",
+  "Etudiants",
+  "Professeurs",
+  "Filières",
+  "Evaluations",
+];
 
 const ICONS: Record<MainItem, string> = {
   Accueil: "bi-house-door",
@@ -34,6 +50,25 @@ type UserInfo = {
   email: string;
   password?: string;
 };
+
+
+// --------- Helpers recherche ----------
+type SearchResult =
+  | { kind: "prof"; id: string; title: string; subtitle?: string }
+  | { kind: "etudiant"; id: string; title: string; subtitle?: string }
+  | { kind: "classe"; id: string; title: string; subtitle?: string };
+
+const norm = (s: string) =>
+  (s || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+const includesLoose = (hay: string, needle: string) =>
+  norm(hay).includes(norm(needle));
+
+// --------------------------------------
 
 export default function AdminNavbar({
   active,
@@ -65,7 +100,11 @@ export default function AdminNavbar({
       if (!menuRef.current.contains(e.target as Node)) setOpenMenu(false);
     }
     function onEsc(e: KeyboardEvent) {
-      if (e.key === "Escape") { setOpenMenu(false); setOpenDrawer(false); }
+      if (e.key === "Escape") {
+        setOpenMenu(false);
+        setOpenDrawer(false);
+        setOpenSearch(false);
+      }
     }
     document.addEventListener("click", onDocClick);
     document.addEventListener("keydown", onEsc);
@@ -75,7 +114,7 @@ export default function AdminNavbar({
     };
   }, []);
 
-  // Profil
+  // --------- Profil ----------
   const [showProfile, setShowProfile] = React.useState(false);
   const [loadingProfile, setLoadingProfile] = React.useState(false);
   const [savingPwd, setSavingPwd] = React.useState(false);
@@ -83,7 +122,9 @@ export default function AdminNavbar({
   const [newPwd, setNewPwd] = React.useState("");
   const [newPwd2, setNewPwd2] = React.useState("");
   const [profileError, setProfileError] = React.useState<string | null>(null);
-  const [profileSuccess, setProfileSuccess] = React.useState<string | null>(null);
+  const [profileSuccess, setProfileSuccess] = React.useState<string | null>(
+    null
+  );
 
   const openProfile = async () => {
     setProfileError(null);
@@ -93,14 +134,19 @@ export default function AdminNavbar({
     setOpenMenu(false);
 
     try {
-      const login = typeof window !== "undefined" ? localStorage.getItem("userLogin") : null;
+      const login =
+        typeof window !== "undefined" ? localStorage.getItem("userLogin") : null;
       const email = auth.currentUser?.email || "";
 
       let snap;
       if (login) {
-        snap = await getDocs(query(collection(db, "users"), where("login", "==", login)));
+        snap = await getDocs(
+          query(collection(db, "users"), where("login", "==", login))
+        );
       } else if (email) {
-        snap = await getDocs(query(collection(db, "users"), where("email", "==", email)));
+        snap = await getDocs(
+          query(collection(db, "users"), where("email", "==", email))
+        );
       }
 
       if (!snap || snap.empty) {
@@ -148,16 +194,21 @@ export default function AdminNavbar({
           await updatePassword(auth.currentUser, newPwd);
         } catch (err: any) {
           if (err?.code === "auth/requires-recent-login") {
-            setProfileError("Sécurité: reconnectez-vous pour changer le mot de passe.");
+            setProfileError(
+              "Sécurité: reconnectez-vous pour changer le mot de passe."
+            );
           } else {
-            setProfileError("Erreur côté Auth lors du changement de mot de passe.");
+            setProfileError(
+              "Erreur côté Auth lors du changement de mot de passe."
+            );
           }
           setSavingPwd(false);
           return;
         }
       }
       setProfileSuccess("Mot de passe mis à jour avec succès.");
-      setNewPwd(""); setNewPwd2("");
+      setNewPwd("");
+      setNewPwd2("");
     } catch (e) {
       console.error(e);
       setProfileError("Erreur lors de l’enregistrement.");
@@ -167,12 +218,176 @@ export default function AdminNavbar({
   };
 
   const handleLogout = async () => {
-    try { await signOut(auth); } finally {
+    try {
+      await signOut(auth);
+    } finally {
       if (typeof window !== "undefined") {
         localStorage.removeItem("userLogin");
         localStorage.removeItem("userRole");
       }
       router.replace("/admin/auth/login");
+    }
+  };
+
+  // --------- RECHERCHE GLOBALE ----------
+  const [search, setSearch] = React.useState("");
+  const [openSearch, setOpenSearch] = React.useState(false);
+  const [searching, setSearching] = React.useState(false);
+  const [results, setResults] = React.useState<SearchResult[]>([]);
+  const [highlight, setHighlight] = React.useState(0);
+  const searchRef = React.useRef<HTMLFormElement | null>(null);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const debounceRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (!searchRef.current) return;
+      if (!searchRef.current.contains(e.target as Node)) {
+        setOpenSearch(false);
+      }
+    }
+    document.addEventListener("click", onClickOutside);
+    return () => document.removeEventListener("click", onClickOutside);
+  }, []);
+
+  const runSearch = React.useCallback(
+    async (term: string) => {
+      const q = term.trim();
+      if (!q) {
+        setResults([]);
+        setOpenSearch(false);
+        setSearching(false);
+        return;
+      }
+      setSearching(true);
+
+      try {
+        const out: SearchResult[] = [];
+
+        // --- Professeurs ---
+        // On récupère quelques profs et on filtre côté client (schémas variés).
+        const profSnap = await getDocs(
+          query(
+            collection(db, "users"),
+            where("role_key", "==", "prof"),
+            fbLimit(25)
+          )
+        );
+        profSnap.forEach((d) => {
+          const v = d.data() as any;
+          const full = `${v.nom || ""} ${v.prenom || ""} ${v.specialite || v.specialty || ""}`;
+          if (includesLoose(full, q)) {
+            out.push({
+              kind: "prof",
+              id: d.id,
+              title: `${v.nom || ""} ${v.prenom || ""}`.trim() || d.id,
+              subtitle: v.specialite || v.specialty || "Professeur",
+            });
+          }
+        });
+
+        // --- Étudiants ---
+        // On couvre plusieurs clés possibles : etudiant / student / eleve
+        const studentKeys = ["etudiant", "student", "eleve"];
+        for (const k of studentKeys) {
+          const stuSnap = await getDocs(
+            query(
+              collection(db, "users"),
+              where("role_key", "==", k),
+              fbLimit(25)
+            )
+          );
+          stuSnap.forEach((d) => {
+            const v = d.data() as any;
+            const full = `${v.nom || ""} ${v.prenom || ""} ${v.matricule || ""} ${v.email || ""}`;
+            if (includesLoose(full, q)) {
+              out.push({
+                kind: "etudiant",
+                id: d.id,
+                title: `${v.nom || ""} ${v.prenom || ""}`.trim() || d.id,
+                subtitle: v.matricule || v.email || "Etudiant",
+              });
+            }
+          });
+        }
+
+        // --- Classes ---
+        const clsSnap = await getDocs(query(collection(db, "classes"), fbLimit(25)));
+        clsSnap.forEach((d) => {
+          const v = d.data() as any;
+          const full = `${v.libelle || ""} ${v.filiere_libelle || ""}`;
+          if (includesLoose(full, q)) {
+            out.push({
+              kind: "classe",
+              id: d.id,
+              title: v.libelle || d.id,
+              subtitle: v.filiere_libelle || "Classe",
+            });
+          }
+        });
+
+        // Tri simple: prof/étudiant/classe groupés + ordre alphabétique
+        const order = { prof: 0, etudiant: 1, classe: 2 } as const;
+        out.sort((a, b) => {
+          const ka = order[a.kind];
+          const kb = order[b.kind];
+          if (ka !== kb) return ka - kb;
+          return (a.title || "").localeCompare(b.title || "", "fr", {
+            sensitivity: "base",
+          });
+        });
+
+        setResults(out.slice(0, 20));
+        setOpenSearch(true);
+        setHighlight(0);
+      } catch (e) {
+        console.error("search error", e);
+        setResults([]);
+        setOpenSearch(false);
+      } finally {
+        setSearching(false);
+      }
+    },
+    [db]
+  );
+
+  const onChangeSearch = (val: string) => {
+    setSearch(val);
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => runSearch(val), 300);
+  };
+
+   const goToResult = (r: SearchResult | undefined) => {
+      if (!r) return;
+      setOpenSearch(false);
+      setSearch("");
+      setResults([]);
+      setHighlight(0);
+
+      if (r.kind === "prof") {
+        onChange("Professeurs");   // ✅ comme si on avait cliqué dans le menu
+      } else if (r.kind === "etudiant") {
+        onChange("Etudiants");
+      } else if (r.kind === "classe") {
+        onChange("Filières");      // ou la section qui liste tes classes
+      }
+      setOpenDrawer(false);        // ferme le drawer mobile si ouvert
+    };
+
+
+  const onKeyDownSearch: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
+    if (!openSearch || results.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => Math.min(h + 1, results.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      goToResult(results[highlight]);
+    } else if (e.key === "Escape") {
+      setOpenSearch(false);
     }
   };
 
@@ -182,22 +397,119 @@ export default function AdminNavbar({
       <header className="topbar">
         <div className="container-fluid h-100 d-flex align-items-center gap-2">
           {/* Burger mobile */}
-          <button className="btn btn-light d-lg-none me-1" onClick={() => setOpenDrawer(true)} aria-label="Ouvrir le menu">
+          <button
+            className="btn btn-light d-lg-none me-1"
+            onClick={() => setOpenDrawer(true)}
+            aria-label="Ouvrir le menu"
+          >
             <i className="bi bi-list" />
           </button>
 
-          {/* Recherche (séparée) */}
-          <form className="flex-grow-1" role="search" onSubmit={(e) => e.preventDefault()}>
-            <div className="input-group search-pill">
-              <span className="input-group-text border-0 bg-transparent ps-3"><i className="bi bi-search" /></span>
-              <input className="form-control border-0 bg-transparent" placeholder="Rechercher…" />
+          {/* Recherche */}
+          <form
+            className="flex-grow-1"
+            role="search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setOpenSearch(false);
+              setSearch("");
+              setResults([]);
+              onChange("Professeurs");   // ✅ montre la vue profs
+              setOpenDrawer(false);
+            }}
+            ref={searchRef}
+          >
+            <div className="input-group search-pill position-relative">
+              <button
+                type="button"
+                className="input-group-text border-0 bg-transparent ps-3"
+                onClick={() => {
+                  setOpenSearch(false);
+                  setSearch("");
+                  setResults([]);
+                  onChange("Professeurs"); // ✅ idem
+                  setOpenDrawer(false);
+                }}
+                title="Rechercher"
+              >
+                <i className="bi bi-search" />
+              </button>
+
+                <input
+                  ref={inputRef}
+                  className="form-control border-0 bg-transparent"
+                  placeholder="Rechercher un professeur, une classe…"
+                  value={search}
+                  onChange={(e) => onChangeSearch(e.target.value)}
+                  onFocus={() => search && setOpenSearch(true)}
+                  onKeyDown={onKeyDownSearch}
+                />
+
+              {/* Dropdown résultats */}
+              {openSearch && (
+                <div className="search-dropdown shadow">
+                  {searching && (
+                    <div className="px-3 py-2 text-muted small">
+                      <span className="spinner-border spinner-border-sm me-2" />
+                      Recherche…
+                    </div>
+                  )}
+                  {!searching && results.length === 0 && (
+                    <div className="px-3 py-2 text-muted small">
+                      Aucun résultat.
+                    </div>
+                  )}
+                  {!searching &&
+                    results.map((r, i) => (
+                      <button
+                        key={`${r.kind}-${r.id}`}
+                        type="button"
+                        className={`search-item ${
+                          i === highlight ? "active" : ""
+                        }`}
+                        onMouseEnter={() => setHighlight(i)}
+                        onClick={() => goToResult(r)}
+                        title={
+                          r.kind === "prof"
+                            ? "Professeur"
+                            : r.kind === "etudiant"
+                            ? "Étudiant"
+                            : "Classe"
+                        }
+                      >
+                        <div className="d-flex align-items-center gap-2">
+                          <span
+                            className={`badge ${
+                              r.kind === "prof"
+                                ? "bg-primary-subtle text-primary-emphasis"
+                                : r.kind === "etudiant"
+                                ? "bg-success-subtle text-success-emphasis"
+                                : "bg-warning-subtle text-warning-emphasis"
+                            }`}
+                            style={{ minWidth: 86, justifyContent: "center" }}
+                          >
+                            {r.kind === "prof"
+                              ? "Professeur"
+                              : r.kind === "etudiant"
+                              ? "Étudiant"
+                              : "Classe"}
+                          </span>
+                          <div className="text-start">
+                            <div className="fw-semibold">{r.title}</div>
+                            {r.subtitle && (
+                              <div className="small text-muted">{r.subtitle}</div>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              )}
             </div>
           </form>
 
           {/* Bouton notif séparé */}
-          <button className="btn btn-icon" title="Notifications">
-            <i className="bi bi-bell" />
-          </button>
+          <NotificationsBell />
 
           {/* Avatar + menu */}
           <div className="position-relative" ref={menuRef}>
@@ -207,7 +519,13 @@ export default function AdminNavbar({
               aria-haspopup="menu"
               aria-expanded={openMenu}
             >
-              <img src="/avatar-woman.png" alt="Profil" width={34} height={34} className="rounded-circle me-2" />
+              <img
+                src="/avatar-woman.png"
+                alt="Profil"
+                width={34}
+                height={34}
+                className="rounded-circle me-2"
+              />
               <span className="d-none d-md-inline">Directeur</span>
               <i className="bi bi-caret-down-fill ms-2" />
             </button>
@@ -215,11 +533,18 @@ export default function AdminNavbar({
             {openMenu && (
               <div
                 className="dropdown-menu dropdown-menu-end show shadow"
-                style={{ position: "absolute", right: 0, top: "100%", zIndex: 1050, minWidth: 240 }}
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "100%",
+                  zIndex: 1050,
+                  minWidth: 240,
+                }}
                 role="menu"
               >
                 <button className="dropdown-item" onClick={openProfile}>
-                  <i className="bi bi-person-badge me-2" /> Informations personnelles
+                  <i className="bi bi-person-badge me-2" /> Informations
+                  personnelles
                 </button>
                 <button className="dropdown-item" disabled>
                   <i className="bi bi-sliders me-2" /> Préférences
@@ -249,7 +574,10 @@ export default function AdminNavbar({
             <button
               key={item}
               className={`sidebar-item ${active === item ? "active" : ""}`}
-              onClick={() => { onChange(item); setOpenDrawer(false); }}
+              onClick={() => {
+                onChange(item);
+                setOpenDrawer(false);
+              }}
               role="menuitem"
             >
               <i className={`${ICONS[item]} me-2`} />
@@ -276,12 +604,25 @@ export default function AdminNavbar({
       {/* ===== Modal profil ===== */}
       {showProfile && (
         <>
-          <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
+          <div
+            className="modal fade show"
+            style={{ display: "block" }}
+            aria-modal="true"
+            role="dialog"
+          >
             <div className="modal-dialog modal-dialog-centered">
               <div className="modal-content">
                 <div className="modal-header">
-                  <h5 className="modal-title"><i className="bi bi-person-badge me-2" />Informations personnelles</h5>
-                  <button type="button" className="btn-close" onClick={() => setShowProfile(false)} aria-label="Close" />
+                  <h5 className="modal-title">
+                    <i className="bi bi-person-badge me-2" />
+                    Informations personnelles
+                  </h5>
+                  <button
+                    type="button"
+                    className="btn-close"
+                    onClick={() => setShowProfile(false)}
+                    aria-label="Close"
+                  />
                 </div>
                 <div className="modal-body">
                   {loadingProfile && (
@@ -339,15 +680,30 @@ export default function AdminNavbar({
                           />
                         </div>
 
-                        {profileError && <div className="alert alert-danger py-2">{profileError}</div>}
-                        {profileSuccess && <div className="alert alert-success py-2">{profileSuccess}</div>}
+                        {profileError && (
+                          <div className="alert alert-danger py-2">{profileError}</div>
+                        )}
+                        {profileSuccess && (
+                          <div className="alert alert-success py-2">{profileSuccess}</div>
+                        )}
 
                         <div className="d-flex justify-content-end gap-2">
-                          <button type="button" className="btn btn-outline-secondary" onClick={() => setShowProfile(false)}>
+                          <button
+                            type="button"
+                            className="btn btn-outline-secondary"
+                            onClick={() => setShowProfile(false)}
+                          >
                             Fermer
                           </button>
                           <button type="submit" className="btn btn-primary" disabled={savingPwd}>
-                            {savingPwd ? (<><span className="spinner-border spinner-border-sm me-2" />Enregistrement…</>) : "Enregistrer"}
+                            {savingPwd ? (
+                              <>
+                                <span className="spinner-border spinner-border-sm me-2" />
+                                Enregistrement…
+                              </>
+                            ) : (
+                              "Enregistrer"
+                            )}
                           </button>
                         </div>
                       </form>
@@ -367,37 +723,28 @@ export default function AdminNavbar({
 
       {/* ======= Styles ======= */}
       <style jsx>{`
-        /* Fond d'application assorti au thème (très clair) + coins arrondis visibles */
         :global(html, body) {
-          background: #eaf2ff;  /* dérivé de #0D6EFD très clair */
+          background: #eaf2ff;
         }
-
-        /* Espace réservé pour la sidebar en desktop (230px + 24px de marge latérale) */
         :global(body.with-admin-sidebar) {
           padding-left: calc(230px + 24px);
         }
-
-        /* TOPBAR arrondie */
-        /* TOPBAR — FIXE */
         .topbar {
           position: fixed;
           top: 12px;
-          /* = sidebar 230 + marge latérale 24 + marge visuelle 12 */
           left: calc(230px + 24px + 12px);
           right: 12px;
           height: 64px;
           background: #ffffff;
           border: 1px solid #e6ebf3;
           border-radius: 16px;
-          box-shadow: 0 2px 8px rgba(13,110,253,0.05);
-          z-index: 1050; /* au-dessus du contenu */
-          margin: 0;     /* les margins n'agissent pas sur fixed */
+          box-shadow: 0 2px 8px rgba(13, 110, 253, 0.05);
+          z-index: 1050;
+          margin: 0;
         }
-
-        /* Cale pour laisser la place à la topbar (64 + 24 de respiration) */
-        .topbar-spacer { height: 88px; }
-
-        /* Mobile / tablette : la sidebar se replie, la topbar prend tout */
+        .topbar-spacer {
+          height: 88px;
+        }
         @media (max-width: 991.98px) {
           .topbar {
             left: 12px;
@@ -405,121 +752,192 @@ export default function AdminNavbar({
             top: 8px;
             border-radius: 12px;
           }
-          .topbar-spacer { height: 80px; }
+          .topbar-spacer {
+            height: 80px;
+          }
         }
-
         .search-pill {
           background: #f7f9fc;
           border: 1px solid #e6ebf3;
           border-radius: 9999px;
-          overflow: hidden;
+          overflow: visible;
         }
-        .search-pill .form-control { box-shadow: none; padding-top: .6rem; padding-bottom: .6rem; }
+        .search-pill .form-control {
+          box-shadow: none;
+          padding-top: 0.6rem;
+          padding-bottom: 0.6rem;
+        }
+        .search-dropdown {
+          position: absolute;
+          top: calc(100% + 6px);
+          left: 0;
+          right: 0;
+          background: #fff;
+          border: 1px solid #e6ebf3;
+          border-radius: 12px;
+          max-height: 380px;
+          overflow: auto;
+          z-index: 2000;
+        }
+        .search-item {
+          display: block;
+          width: 100%;
+          padding: 10px 12px;
+          text-align: left;
+          background: transparent;
+          border: 0;
+          border-bottom: 1px solid #f2f4f8;
+        }
+        .search-item:last-child {
+          border-bottom: 0;
+        }
+        .search-item:hover,
+        .search-item.active {
+          background: #f6f9ff;
+        }
         .btn-icon {
-          background: #fff; border: 1px solid #e6ebf3; border-radius: 12px; padding: .5rem .65rem;
+          background: #fff;
+          border: 1px solid #e6ebf3;
+          border-radius: 12px;
+          padding: 0.5rem 0.65rem;
         }
-        .btn-icon:hover { background: #f3f6fb; }
-        .btn-avatar { background: #fff; border: 1px solid #e6ebf3; border-radius: 12px; padding: .35rem .6rem; }
-        .btn-avatar:hover { background: #f3f6fb; }
-
-        /* SIDEBAR avec coins arrondis et même fond autour */
+        .btn-icon:hover {
+          background: #f3f6fb;
+        }
+        .btn-avatar {
+          background: #fff;
+          border: 1px solid #e6ebf3;
+          border-radius: 12px;
+          padding: 0.35rem 0.6rem;
+        }
+        .btn-avatar:hover {
+          background: #f3f6fb;
+        }
         .admin-sidebar {
           position: fixed;
-          top: 12px; left: 12px; bottom: 12px;   /* marges pour afficher l'arrondi */
+          top: 12px;
+          left: 12px;
+          bottom: 12px;
           width: 230px;
-          background: linear-gradient(180deg, #0D6EFD 0%, #0b5ed7 100%);
+          background: linear-gradient(180deg, #0d6efd 0%, #0b5ed7 100%);
           color: #fff;
           display: flex;
           flex-direction: column;
           z-index: 1045;
           border: 0;
           border-radius: 18px;
-          overflow: hidden;                       /* pour que l'arrondi s'applique à l'intérieur */
-          transition: transform .25s ease;
-          box-shadow: 0 10px 24px rgba(13,110,253,.12); /* doux, pas “moche” */
+          overflow: hidden;
+          transition: transform 0.25s ease;
+          box-shadow: 0 10px 24px rgba(13, 110, 253, 0.12);
         }
-
         .sidebar-header {
-          padding: 1rem .9rem;
+          padding: 1rem 0.9rem;
           display: flex;
           align-items: center;
           justify-content: center;
           min-height: 104px;
-          border-bottom: 1px solid rgba(255,255,255,.12);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
         }
         .sidebar-logo {
-          height: 92px;   /* logo bien visible */
+          height: 92px;
           width: auto;
           object-fit: contain;
         }
-
         .sidebar-menu {
-          padding: .6rem;
+          padding: 0.6rem;
           display: flex;
           flex-direction: column;
-          gap: .35rem;
+          gap: 0.35rem;
           overflow: auto;
         }
-
         .sidebar-item {
           appearance: none;
           border: 1px solid transparent;
-          background: rgba(255,255,255,.06);
+          background: rgba(255, 255, 255, 0.06);
           color: #e7eeff;
           text-align: left;
-          padding: .48rem .72rem;         /* plus compact */
+          padding: 0.48rem 0.72rem;
           border-radius: 12px;
           font-weight: 500;
-          font-size: .93rem;               /* texte un peu plus petit */
+          font-size: 0.93rem;
           cursor: pointer;
-          transition: background .2s ease, color .2s ease, border-color .2s ease;
-          display: flex; align-items: center; gap: .5rem;
+          transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
         }
-        .sidebar-item:hover { background: rgba(255,255,255,.12); color: #ffffff; }
+        .sidebar-item:hover {
+          background: rgba(255, 255, 255, 0.12);
+          color: #ffffff;
+        }
         .sidebar-item.active {
           background: #ffffff;
-          color: #0D6EFD;
+          color: #0d6efd;
           border-color: #e8f0ff;
         }
-
         .sidebar-footer {
           margin-top: auto;
-          padding: .75rem;
-          border-top: 1px solid rgba(255,255,255,.15);
-          display: grid; gap: .5rem;
+          padding: 0.75rem;
+          border-top: 1px solid rgba(255, 255, 255, 0.15);
+          display: grid;
+          gap: 0.5rem;
           background: transparent;
         }
         .sidebar-utility {
-          background: rgba(255,255,255,.1);
+          background: rgba(255, 255, 255, 0.1);
           color: #fff;
-          border: 1px solid rgba(255,255,255,.15);
-          padding: .5rem .75rem;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          padding: 0.5rem 0.75rem;
           border-radius: 12px;
           text-align: left;
         }
-        .sidebar-utility:hover { background: rgba(255,255,255,.18); }
-
-        /* Arrondis et fond pour le contenu principal — ajoute className="app-main" à ton <main> */
+        .sidebar-utility:hover {
+          background: rgba(255, 255, 255, 0.18);
+        }
         :global(main.app-main) {
           background: #ffffff;
           border: 1px solid #e6ebf3;
           border-radius: 16px;
-          margin: 12px;                   /* même marge que topbar et sidebar */
+          margin: 12px;
           padding: 16px;
-          box-shadow: 0 6px 20px rgba(13,110,253,0.06);
+          box-shadow: 0 6px 20px rgba(13, 110, 253, 0.06);
         }
-
-
-
-        /* Drawer mobile */
         @media (max-width: 991.98px) {
-          :global(body.with-admin-sidebar) { padding-left: 0; }
-          .admin-sidebar { transform: translateX(-100%); left: 0; right: auto; width: 82vw; max-width: 320px; border-radius: 0; top: 0; bottom: 0; margin: 0; }
-          .admin-sidebar.open { transform: translateX(0); }
-          .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1040; }
-          .sidebar-overlay.show { display: block; }
-          .topbar { margin: 0; border-radius: 0; }
-          :global(main.app-main) { margin: 8px; border-radius: 12px; }
+          :global(body.with-admin-sidebar) {
+            padding-left: 0;
+          }
+          .admin-sidebar {
+            transform: translateX(-100%);
+            left: 0;
+            right: auto;
+            width: 82vw;
+            max-width: 320px;
+            border-radius: 0;
+            top: 0;
+            bottom: 0;
+            margin: 0;
+          }
+          .admin-sidebar.open {
+            transform: translateX(0);
+          }
+          .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.35);
+            z-index: 1040;
+          }
+          .sidebar-overlay.show {
+            display: block;
+          }
+          .topbar {
+            margin: 0;
+            border-radius: 0;
+          }
+          :global(main.app-main) {
+            margin: 8px;
+            border-radius: 12px;
+          }
         }
       `}</style>
     </>

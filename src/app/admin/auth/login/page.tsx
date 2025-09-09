@@ -1,11 +1,10 @@
-//src/app/admin/auth/login/page.tsx
 'use client';
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 
-import Link from 'next/link'; // (pas utilisé pour "Sign up" mais conservé si besoin d’autres liens)
+import Link from 'next/link';
 import {
   collection,
   getDocs,
@@ -23,7 +22,7 @@ import {
 import { db, auth } from '../../../../../firebaseConfig';
 import Logo from '../../assets/iibs_logo.png';
 import Toast from '../../components/ui/Toast';
-import { routeForRole } from '@/lib/roleRouting';
+import { routeForRole, isPathAllowedForRole } from '@/lib/roleRouting';
 
 /* Helpers */
 const EMAIL_REGEX = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
@@ -36,15 +35,13 @@ const normalizeLogin = (raw: string) => {
   return s;
 };
 const loginNorm = (login: string) => login.toLowerCase();
-
-// Anti-injection très simple (supprime chevrons & contrôles)
 const sanitize = (v: string) =>
   v.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').replace(/[<>]/g, '').trim();
 
 export default function Login() {
   const router = useRouter();
 
-  const [identifier, setIdentifier] = useState(''); // email OU nom d'utilisateur
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -63,21 +60,17 @@ export default function Login() {
   const showSuccessToast = (msg: string) => { setToastMessage(msg); setShowSuccess(true); };
   const showErrorToast   = (msg: string) => { setToastMessage(msg); setShowError(true); };
 
-  /** Résout un email à partir d’un identifiant (email direct ou username). */
   const resolveEmail = async (id: string): Promise<{ email: string; userDocId?: string }> => {
     const raw = sanitize(id);
     const trimmed = raw.trim();
 
-    // Email direct ?
     if (EMAIL_REGEX.test(trimmed)) {
       return { email: trimmed };
     }
 
-    // Sinon, on considère un nom d'utilisateur -> on cherche l'email en base
     const usersCol = collection(db, 'users');
     const norm = loginNorm(normalizeLogin(trimmed));
 
-    // D'abord par login_norm
     let snap = await getDocs(query(usersCol, where('login_norm', '==', norm), fbLimit(1)));
     if (!snap.empty) {
       const d = snap.docs[0];
@@ -86,7 +79,6 @@ export default function Login() {
       return { email: String(data.email), userDocId: d.id };
     }
 
-    // Fallback legacy : certains anciens docs n'ont pas login_norm
     snap = await getDocs(query(usersCol, where('login', '==', trimmed), fbLimit(1)));
     if (!snap.empty) {
       const d = snap.docs[0];
@@ -107,13 +99,9 @@ export default function Login() {
     setShowSuccess(false);
 
     try {
-      // 1) Résoudre l'email depuis l'identifiant
       const { email } = await resolveEmail(identifier);
-
-      // 2) Auth Firebase (source de vérité du mot de passe)
       const cred = await signInWithEmailAndPassword(auth, email, password);
 
-      // 3) Charger la fiche dans `users`
       const uid = cred.user.uid;
       let userDocSnap = await getDoc(doc(db, 'users', uid));
       if (!userDocSnap.exists()) {
@@ -131,14 +119,21 @@ export default function Login() {
       const firstLoginRaw = userData?.first_login;
       const firstLogin = firstLoginRaw === '1' || firstLoginRaw === 1 || firstLoginRaw === true;
 
-      // 4) Stockage local
+      // Stockage local (utile ailleurs)
       localStorage.setItem('userLogin', userData?.login || sanitize(identifier));
       if (roleLabelFromUser) localStorage.setItem('userRole', roleLabelFromUser);
 
-      // 5) Redirection
+      // Redirection
       if (firstLogin) {
         showSuccessToast('Connexion réussie — veuillez changer votre mot de passe.');
         router.replace('/admin/auth/change-password');
+        return;
+      }
+
+      // ➜ priorité au "lastPath" si autorisé pour le rôle
+      const lastPath = (typeof window !== 'undefined' && localStorage.getItem('lastPath')) || '';
+      if (roleLabelFromUser && lastPath && isPathAllowedForRole(roleLabelFromUser, lastPath)) {
+        router.replace(lastPath);
         return;
       }
 
@@ -147,7 +142,7 @@ export default function Login() {
         return;
       }
 
-      // Résolution libellé via roles si besoin
+      // Résolution par role_id si besoin
       if (roleId) {
         try {
           const roleDoc = await getDoc(doc(db, 'roles', String(roleId)));
@@ -160,12 +155,16 @@ export default function Login() {
           }
           if (roleName) {
             localStorage.setItem('userRole', roleName);
-            router.replace(routeForRole(roleName));
+            // recheck lastPath avec ce roleName
+            const lp = (typeof window !== 'undefined' && localStorage.getItem('lastPath')) || '';
+            if (lp && isPathAllowedForRole(roleName, lp)) {
+              router.replace(lp);
+            } else {
+              router.replace(routeForRole(roleName));
+            }
             return;
           }
-        } catch {
-          /* ignore */
-        }
+        } catch {/* ignore */}
       }
 
       router.replace('/admin/home');
@@ -219,8 +218,6 @@ export default function Login() {
     try {
       const { email } = await resolveEmail(input);
       await sendPasswordResetEmail(auth, email);
-
-      // Ferme le premier modal et ouvre la confirmation
       setShowForgotModal(false);
       setShowCheckEmailModal(true);
     } catch (err: any) {
@@ -240,11 +237,8 @@ export default function Login() {
 
   const closeCheckEmail = () => {
     setShowCheckEmailModal(false);
-    // On “revient” sur la page de login : on y est déjà, on recentre juste le focus
-    // Optionnel : router.replace('/admin/auth/login');
   };
 
-  /* -------- UI compacte (pas de scroll) -------- */
   return (
     <div className="min-vh-100 d-flex align-items-center justify-content-center" style={{ background: '#f8f9fb' }}>
       <div className="container" style={{ maxWidth: 460 }}>
@@ -313,34 +307,18 @@ export default function Login() {
               </button>
 
               <div className="text-center mt-2">
-                <button
-                  type="button"
-                  className="btn btn-link p-0 small"
-                  onClick={openForgot}
-                >
+                <button type="button" className="btn btn-link p-0 small" onClick={openForgot}>
                   Mot de passe oublié ?
                 </button>
               </div>
             </form>
 
-            {/* Toasts */}
-            <Toast
-              message={toastMessage}
-              type="success"
-              show={showSuccess}
-              onClose={() => setShowSuccess(false)}
-            />
-            <Toast
-              message={toastMessage}
-              type="error"
-              show={showError}
-              onClose={() => setShowError(false)}
-            />
+            <Toast message={toastMessage} type="success" show={showSuccess} onClose={() => setShowSuccess(false)} />
+            <Toast message={toastMessage} type="error" show={showError} onClose={() => setShowError(false)} />
           </div>
         </div>
       </div>
 
-      {/* -------- Modal: Saisir email/login pour reset -------- */}
       {showForgotModal && (
         <>
           <div className="modal fade show" style={{ display: 'block' }} aria-modal="true" role="dialog">
@@ -391,7 +369,6 @@ export default function Login() {
         </>
       )}
 
-      {/* -------- Modal: Confirmation "Vérifiez votre mail" -------- */}
       {showCheckEmailModal && (
         <>
           <div className="modal fade show" style={{ display: 'block' }} aria-modal="true" role="dialog">
@@ -405,9 +382,7 @@ export default function Login() {
                   Un e-mail de réinitialisation a été envoyé. Veuillez suivre le lien reçu pour créer un nouveau mot de passe.
                 </div>
                 <div className="modal-footer">
-                  <button className="btn btn-primary" onClick={closeCheckEmail}>
-                    OK
-                  </button>
+                  <button className="btn btn-primary" onClick={closeCheckEmail}>OK</button>
                 </div>
               </div>
             </div>

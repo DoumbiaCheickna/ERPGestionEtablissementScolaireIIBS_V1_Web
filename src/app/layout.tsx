@@ -1,4 +1,3 @@
-//src/app/layout.tsx
 'use client';
 
 import { ReactNode, useEffect, useState } from 'react';
@@ -9,6 +8,7 @@ import Navbar from './admin/components/layout/Navbar';
 import FirstLoginGuard from './admin/auth/FirstLoginGuard';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import 'bootstrap-icons/font/bootstrap-icons.css';
+import { isPathAllowedForRole, routeForRole } from '@/lib/roleRouting';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // On observe la session juste pour l’affichage de la navbar
+  // observer session (affichage navbar + logique d'accueil)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
@@ -25,9 +25,35 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     return () => unsub();
   }, []);
 
-  // Rediriger la racine vers login (le reste est géré par le garde)
+  // mémoriser la dernière route (sauf login/change-password)
   useEffect(() => {
-    if (pathname === '/') router.replace('/admin/auth/login');
+    if (!pathname) return;
+    const authPaths = ['/admin/auth/login', '/admin/auth/change-password'];
+    if (!authPaths.includes(pathname)) {
+      try { localStorage.setItem('lastPath', pathname); } catch {}
+    }
+  }, [pathname]);
+
+  // gestion de la racine "/"
+  useEffect(() => {
+    if (pathname !== '/') return;
+
+    const go = () => {
+      const isLogged = !!auth.currentUser;
+      if (isLogged) {
+        const role = (typeof window !== 'undefined' && localStorage.getItem('userRole')) || '';
+        const lastPath = (typeof window !== 'undefined' && localStorage.getItem('lastPath')) || '';
+        if (role && lastPath && isPathAllowedForRole(role, lastPath)) {
+          router.replace(lastPath);
+        } else {
+          router.replace(routeForRole(role));
+        }
+      } else {
+        router.replace('/admin/auth/login');
+      }
+    };
+
+    go();
   }, [pathname, router]);
 
   if (booting) {
@@ -47,7 +73,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  // afficher la navbar sur /admin sauf login/change-password et hors espace directeur
+  // navbar sur /admin sauf login/change-password et hors espace directeur
   const isDirectorArea = pathname.startsWith('/directeur-des-etudes');
   const authPaths = ['/admin/auth/login', '/admin/auth/change-password'];
   const showAdminNavbar =
@@ -60,7 +86,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="fr">
       <body>
         {showAdminNavbar && <Navbar />}
-        {/* ⬇️ blocage 1ʳᵉ connexion / accès non auth */}
         <FirstLoginGuard>{children}</FirstLoginGuard>
       </body>
     </html>

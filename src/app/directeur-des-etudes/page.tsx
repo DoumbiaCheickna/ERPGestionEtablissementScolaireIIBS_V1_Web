@@ -46,7 +46,9 @@ export default function DirecteurHomePage() {
           {/* Zone principale */}
           <main className="main-area">
             {/* 👇 Ton contenu existant */}
-            {active === "Accueil" && <HomeDashboard />}
+            {active === "Accueil" && (
+  <HomeDashboard onOpenEtudiants={() => setActive("Etudiants")} />
+)}
             {active === "Professeurs" && <ProfessorsPage />}
             {active === "Filières" && <FilieresPage />}
             {active === "Etudiants" && <EtudiantsPage />}
@@ -54,7 +56,7 @@ export default function DirecteurHomePage() {
 
             {/* Placeholder autres onglets */}
             {active &&
-              active !== "Accueil" &&
+              active !== "Accueil" && 
               active !== "Professeurs" &&
               active !== "Filières" &&
               active !== "Etudiants" &&

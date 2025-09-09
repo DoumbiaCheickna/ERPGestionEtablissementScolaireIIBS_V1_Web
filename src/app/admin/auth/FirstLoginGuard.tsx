@@ -1,4 +1,3 @@
-//src/app/admin/auth/FirstLoginGuard.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -8,6 +7,7 @@ import { auth, db } from '../../../../firebaseConfig';
 import {
   collection, doc, getDoc, getDocs, query, where, limit as fbLimit,
 } from 'firebase/firestore';
+import { isPathAllowedForRole, routeForRole } from '@/lib/roleRouting';
 
 type Status = 'loading' | 'ok' | 'redirect';
 
@@ -23,7 +23,6 @@ export default function FirstLoginGuard({ children }: { children: React.ReactNod
         const isLogin = pathname === '/admin/auth/login';
         const isChangePwd = pathname === '/admin/auth/change-password';
 
-        // Pas connecté → on autorise seulement les routes d’auth
         if (!user) {
           if (!isAuthRoute) {
             setStatus('redirect');
@@ -34,7 +33,7 @@ export default function FirstLoginGuard({ children }: { children: React.ReactNod
           return;
         }
 
-        // Récup doc Firestore: priorité docId = uid, sinon fallback par email
+        // Récupération doc Firestore
         const uid = user.uid;
         let snap = await getDoc(doc(db, 'users', uid));
         if (!snap.exists() && user.email) {
@@ -46,22 +45,30 @@ export default function FirstLoginGuard({ children }: { children: React.ReactNod
 
         const u = snap.exists() ? (snap.data() as any) : null;
         const firstLogin = u?.first_login === '1' || u?.first_login === 1 || u?.first_login === true;
+        const roleLabel = u?.role_libelle || '';
 
+        // first login → impose le changement de mot de passe
         if (firstLogin) {
-          // doit changer le mot de passe d’abord
           if (!isChangePwd) {
             setStatus('redirect');
             router.replace('/admin/auth/change-password');
             return;
           }
-          setStatus('ok'); // déjà sur la bonne page
+          setStatus('ok');
           return;
         }
 
-        // pas “first login” → si l’utilisateur va sur une page d’auth, on l’envoie vers /admin/home
+        // utilisateur déjà connecté sur route d’auth → renvoyer vers lastPath autorisé ou route par rôle
         if (isLogin || isChangePwd) {
+          const lastPath = (typeof window !== 'undefined' && localStorage.getItem('lastPath')) || '';
+          const role = roleLabel || (typeof window !== 'undefined' && localStorage.getItem('userRole')) || '';
           setStatus('redirect');
-          router.replace('/admin/home');
+
+          if (role && lastPath && isPathAllowedForRole(role, lastPath)) {
+            router.replace(lastPath);
+            return;
+          }
+          router.replace(routeForRole(role));
           return;
         }
 
