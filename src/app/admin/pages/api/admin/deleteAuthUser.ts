@@ -1,3 +1,4 @@
+//src/app/admin/pages/api/admin/deleteAuthUser.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import admin from 'firebase-admin';
 

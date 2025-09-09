@@ -951,7 +951,7 @@ export default function ProfessorsPage() {
                 </span>
                 <input
                   className="form-control border-0"
-                  placeholder="Rechercher (nom, prénom, spécialité)…"
+                  placeholder="Rechercher"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => {

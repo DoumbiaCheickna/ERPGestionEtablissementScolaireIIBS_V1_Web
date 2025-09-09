@@ -60,6 +60,8 @@ const sanitize = (v: string) =>
   v.replace(/<\s*script/gi, "").replace(/[<>]/g, "").trim().slice(0, 5000);
 const ci = (s: string) => sanitize(s).toLowerCase();
 const safeFile = (s: string) => s.replace(/[^\p{L}\p{N}\-_. ]/gu, "_");
+const clsx = (...p: (string | false | null | undefined)[]) => p.filter(Boolean).join(" ");
+
 
 const DEFAULT_NIVEAUX: TNiveauDoc[] = [
   { id: "L1", libelle: "Licence 1", order: 1 },
@@ -240,63 +242,121 @@ export default function FilieresPage() {
 
   return (
     <div className="container-fluid py-3">
-      <div className="row">
-        {/* NAV vertical sections */}
-        <aside className="col-12 col-md-3 col-lg-2 mb-3 mb-md-0">
-          <div className="list-group">
-            {(["Gestion", "Informatique"] as SectionKey[]).map((s) => (
-              <button
-                key={s}
-                className={`list-group-item list-group-item-action ${section === s ? "active" : ""}`}
-                onClick={() => handleSelectSection(s)}
+      {/* ---------- Fil d’Ariane discret au-dessus du titre ---------- */}
+      <nav
+        aria-label="breadcrumb"
+        className="mb-1"
+        style={{ ['--bs-breadcrumb-divider' as any]: "'>'" }}
+      >
+        <ol className="breadcrumb small mb-0">
+          <li className="breadcrumb-item">
+            <a
+              href="#"
+              className="text-decoration-none"
+              onClick={(e) => { e.preventDefault(); setView({ type: "filieres" }); }}
+            >
+              Filières
+            </a>
+          </li>
+
+          <li className="breadcrumb-item">
+            <a
+              href="#"
+              className="text-decoration-none"
+              onClick={(e) => { e.preventDefault(); handleSelectSection(section); }}
+            >
+              {section}
+            </a>
+          </li>
+
+          {view.type !== "filieres" && "filiere" in view && (
+            <li className="breadcrumb-item">
+              <a
+                href="#"
+                className="text-decoration-none"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setView({ type: "classes", filiere: view.filiere });
+                }}
               >
-                {s}
-              </button>
-            ))}
-          </div>
-          <div className="mt-2 small text-muted">
-            Année : <strong>{selected?.label || "—"}</strong>
-          </div>
-        </aside>
-
-        {/* CONTENU */}
-        <div className="col-12 col-md-9 col-lg-10">
-          {view.type === "filieres" && (
-            <FilieresList
-              section={section}
-              academicYearId={selected?.id || ""}
-              onOpenFiliere={(f) => setView({ type: "classes", filiere: f })}
-              ok={ok}
-              ko={ko}
-            />
-          )}
-
-          {view.type === "classes" && (
-            <FiliereClasses
-              filiere={view.filiere}
-              onBack={() => setView({ type: "filieres" })}
-              onOpenClasse={(classe) =>
-                setView({ type: "classe", filiere: view.filiere, classe, tab: "matieres" })
-              }
-              ok={ok}
-              ko={ko}
-            />
+                {view.filiere.libelle}
+              </a>
+            </li>
           )}
 
           {view.type === "classe" && (
-            <ClasseDetail
-              filiere={view.filiere}
-              classe={view.classe}
-              tab={view.tab ?? "matieres"}
-              onChangeTab={(t) =>
-                setView({ type: "classe", filiere: view.filiere, classe: view.classe, tab: t })
-              }
-              onBackToClasses={() => setView({ type: "classes", filiere: view.filiere })}
-              ok={ok}
-              ko={ko}
-            />
+            <li className="breadcrumb-item active" aria-current="page">
+              {view.classe.libelle}
+            </li>
           )}
+        </ol>
+      </nav>
+
+      {/* ---------- Header : titre + onglets horizontaux ---------- */}
+      <div className="d-flex justify-content-between align-items-end flex-wrap mb-3">
+        <div>
+          <h3 className="mb-1">
+            {view.type === "filieres" && <>Filières — {section}</>}
+            {view.type === "classes" && <>{view.filiere.libelle}</>}
+            {view.type === "classe" && <>{view.classe.libelle}</>}
+          </h3>
+          <div className="text-muted">
+            Année : <strong>{selected?.label || "—"}</strong>
+          </div>
         </div>
+
+        {/* Onglets horizontaux Section */}
+        <div className="btn-group" role="tablist" aria-label="Sections">
+          {(["Gestion", "Informatique"] as SectionKey[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={clsx("btn btn-sm", s === section ? "btn-primary" : "btn-outline-primary")}
+              aria-selected={s === section}
+              onClick={() => handleSelectSection(s)}
+            >
+              <i className={clsx("me-2", s === "Gestion" ? "bi bi-briefcase" : "bi bi-pc-display")} />
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ---------- CONTENU (inchangé) ---------- */}
+      <div>
+        {view.type === "filieres" && (
+          <FilieresList
+            section={section}
+            academicYearId={selected?.id || ""}
+            onOpenFiliere={(f) => setView({ type: "classes", filiere: f })}
+            ok={ok}
+            ko={ko}
+          />
+        )}
+
+        {view.type === "classes" && (
+          <FiliereClasses
+            filiere={view.filiere}
+            onBack={() => setView({ type: "filieres" })}
+            onOpenClasse={(classe) =>
+              setView({ type: "classe", filiere: view.filiere, classe, tab: "matieres" })
+            }
+            ok={ok}
+            ko={ko}
+          />
+        )}
+
+        {view.type === "classe" && (
+          <ClasseDetail
+            filiere={view.filiere}
+            classe={view.classe}
+            tab={view.tab ?? "matieres"}
+            onChangeTab={(t) => setView({ type: "classe", filiere: view.filiere, classe: view.classe, tab: t })}
+            onBackToClasses={() => setView({ type: "classes", filiere: view.filiere })}
+            ok={ok}
+            ko={ko}
+          />
+        )}
       </div>
 
       {/* Toasts global */}

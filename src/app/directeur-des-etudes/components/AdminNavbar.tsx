@@ -390,7 +390,7 @@ export default function AdminNavbar({
           border: 1px solid #e6ebf3;
           border-radius: 16px;
           box-shadow: 0 2px 8px rgba(13,110,253,0.05);
-          z-index: 1060; /* au-dessus du contenu */
+          z-index: 1050; /* au-dessus du contenu */
           margin: 0;     /* les margins n'agissent pas sur fixed */
         }
 
@@ -508,6 +508,8 @@ export default function AdminNavbar({
           padding: 16px;
           box-shadow: 0 6px 20px rgba(13,110,253,0.06);
         }
+
+
 
         /* Drawer mobile */
         @media (max-width: 991.98px) {
