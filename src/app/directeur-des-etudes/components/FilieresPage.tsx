@@ -49,6 +49,7 @@ type TMatiere = {
   academic_year_id: string;
   assigned_prof_id?: string | null;
   assigned_prof_name?: string | null;
+  ref_matiere_id?: string | null;
 };
 
 type View =
@@ -1158,6 +1159,12 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
   const [matiereProfId, setMatiereProfId] = useState<string>(""); // creation
   const [editProfId, setEditProfId] = useState<string>("");       // edition
 
+  // Choix d'une matière existante (même niveau & année)
+  const [sameLevelChoices, setSameLevelChoices] = useState<{id:string; libelle:string; classe:string}[]>([]);
+  const [sameLevelLoading, setSameLevelLoading] = useState(true);
+  const [sameLevelError, setSameLevelError] = useState<string|null>(null);
+  const [selectedRefMatId, setSelectedRefMatId] = useState<string>(""); // create
+  const [editRefMatId, setEditRefMatId] = useState<string>("");         // edit
 
   // pagination
   const [matPage, setMatPage] = useState<number>(1);
@@ -1242,6 +1249,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
           academic_year_id: String(data.academic_year_id || ""),
           assigned_prof_id: data.assigned_prof_id ?? null,
           assigned_prof_name: data.assigned_prof_name ?? null,
+          ref_matiere_id: data.ref_matiere_id ?? null, // ⬅️ NEW
 
         });
       });
@@ -1266,6 +1274,69 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
   useEffect(() => {
     setUePage(1);
   }, [ues.length]);
+
+  useEffect(() => {
+  const loadSameLevel = async () => {
+    setSameLevelLoading(true);
+    setSameLevelError(null);
+    try {
+      // 1) récupérer toutes les classes du même niveau + année
+      const cSnap = await getDocs(
+        query(
+          collection(db,"classes"),
+          where("niveau_id","==", classe.niveau_id),
+          where("academic_year_id","==", classe.academic_year_id)
+        )
+      );
+      const otherClassIds: string[] = [];
+      const classLabelById: Record<string,string> = {};
+      cSnap.forEach(d=>{
+        const v = d.data() as any;
+        if (d.id !== classe.id) {
+          otherClassIds.push(d.id);
+          classLabelById[d.id] = String(v.libelle || d.id);
+        }
+      });
+
+      if (otherClassIds.length === 0) { setSameLevelChoices([]); setSameLevelLoading(false); return; }
+
+      // 2) Firestore 'in' max 10 -> on batch si besoin
+      const CHUNK = 10;
+      const chunks: string[][] = [];
+      for (let i=0;i<otherClassIds.length;i+=CHUNK) chunks.push(otherClassIds.slice(i,i+CHUNK));
+
+      const all: {id:string; libelle:string; classe:string}[] = [];
+      for (const ids of chunks) {
+        const mSnap = await getDocs(
+          query(
+            collection(db,"matieres"),
+            where("class_id","in", ids),
+            where("academic_year_id","==", classe.academic_year_id)
+          )
+        );
+        mSnap.forEach(d=>{
+          const v = d.data() as any;
+          all.push({
+            id: d.id,
+            libelle: String(v.libelle || ""),
+            classe: classLabelById[String(v.class_id)] || String(v.class_id)
+          });
+        });
+      }
+      // tri par libellé
+      all.sort((a,b)=> a.libelle.localeCompare(b.libelle,"fr",{sensitivity:"base"}));
+      setSameLevelChoices(all);
+    } catch(e){
+      console.error(e);
+      setSameLevelError("Impossible de charger les matières des autres classes du même niveau.");
+    } finally {
+      setSameLevelLoading(false);
+    }
+  };
+  loadSameLevel();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [classe.id, classe.niveau_id, classe.academic_year_id]);
+
 
   const filteredMatieres = useMemo(() => {
     if (!ueFilter) return matieres;
@@ -1308,6 +1379,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
         academic_year_id: classe.academic_year_id,
         assigned_prof_id: prof ? prof.id : null,
         assigned_prof_name: profName,
+        ref_matiere_id: selectedRefMatId || null,
         created_at: Date.now(),
       });
 
@@ -1326,6 +1398,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
       setLibelle("");
       setMatiereUeId("");
       setMatiereProfId("");
+      setSelectedRefMatId(""); // ⬅️ NEW
       setShowAdd(false);
       fetchAll();
     } catch (e) {
@@ -1340,6 +1413,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
     setEditLibelle(m.libelle);
     setEditUeId(m.ue_id ?? "");
     setEditProfId(m.assigned_prof_id || "");
+    setEditRefMatId(m.ref_matiere_id || ""); // ⬅️ NEW
   };
 
   // ⬇️ NEW
@@ -1398,6 +1472,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
         ue_id: editUeId || null,
         assigned_prof_id: newProfId || null,
         assigned_prof_name: newProfName,
+        ref_matiere_id: editRefMatId || null, // ⬅️ NEW
       });
 
       // MAJ des affectations si le prof a changé
@@ -1785,6 +1860,32 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
                 <div className="modal-body">
                   {addError ? <div className="alert alert-danger">{addError}</div> : null}
                   <div className="mb-3">
+                    <label className="form-label">Lier à une matière existante (même niveau)</label>
+                    {sameLevelError ? <div className="alert alert-warning py-1 px-2 mb-2">{sameLevelError}</div> : null}
+                    <select
+                      className="form-select"
+                      value={selectedRefMatId}
+                      onChange={(e)=>{
+                        const id = e.target.value;
+                        setSelectedRefMatId(id);
+                        // optionnel : préremplir le libellé
+                        if (id) {
+                          const found = sameLevelChoices.find(x=>x.id===id);
+                          if (found) setLibelle(found.libelle);
+                        }
+                      }}
+                      disabled={sameLevelLoading}
+                    >
+                      <option value="">— Aucune (création indépendante) —</option>
+                      {sameLevelChoices.map(x=>(
+                        <option key={x.id} value={x.id}>
+                          {x.libelle} — {x.classe}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="form-text">Permet de référencer une matière identique d’une autre classe du même niveau.</div>
+                  </div>
+                  <div className="mb-3">
                     <label className="form-label">Libellé</label>
                     <input
                       className="form-control"
@@ -1844,6 +1945,23 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
                       value={editLibelle}
                       onChange={(e) => setEditLibelle(e.target.value)}
                     />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Référence (même niveau)</label>
+                    {sameLevelError ? <div className="alert alert-warning py-1 px-2 mb-2">{sameLevelError}</div> : null}
+                    <select
+                      className="form-select"
+                      value={editRefMatId}
+                      onChange={(e)=> setEditRefMatId(e.target.value)}
+                      disabled={sameLevelLoading}
+                    >
+                      <option value="">— Aucune —</option>
+                      {sameLevelChoices.map(x=>(
+                        <option key={x.id} value={x.id}>
+                          {x.libelle} — {x.classe}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="form-label">UE (optionnel)</label>
