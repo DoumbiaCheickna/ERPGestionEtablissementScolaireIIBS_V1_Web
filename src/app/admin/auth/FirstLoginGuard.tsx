@@ -60,17 +60,14 @@ export default function FirstLoginGuard({ children }: { children: React.ReactNod
 
         // utilisateur déjà connecté sur route d’auth → renvoyer vers lastPath autorisé ou route par rôle
         if (isLogin || isChangePwd) {
-          const lastPath = (typeof window !== 'undefined' && localStorage.getItem('lastPath')) || '';
-          const role = roleLabel || (typeof window !== 'undefined' && localStorage.getItem('userRole')) || '';
           setStatus('redirect');
-
-          if (role && lastPath && isPathAllowedForRole(role, lastPath)) {
-            router.replace(lastPath);
-            return;
-          }
-          router.replace(routeForRole(role));
+          const uid = user.uid;
+          const role = roleLabel || (typeof window !== 'undefined' && localStorage.getItem('userRole')) || '';
+          const { chooseLanding } = await import('@/lib/safeRedirect');
+          router.replace(chooseLanding(uid, role));
           return;
         }
+
 
         setStatus('ok');
       } catch (e) {

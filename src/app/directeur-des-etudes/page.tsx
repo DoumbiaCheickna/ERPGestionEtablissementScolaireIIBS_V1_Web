@@ -9,6 +9,7 @@ import ProfessorsPage from "./components/ProfessorsPage";
 import FilieresPage from "./components/FilieresPage";
 import EtudiantsPage from "./components/EtudiantsPage";
 import EmargementsPage from "./components/EmargementsPage";
+import PersonnelPage from "./components/PersonnelPage";
 
 type MainItem =
   | "Accueil"
@@ -16,6 +17,7 @@ type MainItem =
   | "Etudiants"
   | "Professeurs"
   | "Filières"
+  | "Personnel" 
   | "Evaluations"
   | null;
 
@@ -29,6 +31,7 @@ export default function DirecteurHomePage() {
     "Filières",
     "Etudiants",
     "Emargements",
+    "Personnel",
   ];
   const showSecondary = active !== null && !HIDE_SECONDARY.includes(active);
 
@@ -53,6 +56,7 @@ export default function DirecteurHomePage() {
             {active === "Filières" && <FilieresPage />}
             {active === "Etudiants" && <EtudiantsPage />}
             {active === "Emargements" && <EmargementsPage />}
+            {active === "Personnel" && <PersonnelPage />} 
 
             {/* Placeholder autres onglets */}
             {active &&
@@ -60,7 +64,8 @@ export default function DirecteurHomePage() {
               active !== "Professeurs" &&
               active !== "Filières" &&
               active !== "Etudiants" &&
-              active !== "Emargements" && (
+              active !== "Emargements" &&
+              active !== "Personnel" && (
                 <div className="card shadow-sm">
                   <div className="card-body">
                     <h5 className="card-title mb-3">{active}</h5>

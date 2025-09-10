@@ -26,35 +26,42 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   }, []);
 
   // mémoriser la dernière route (sauf login/change-password)
+  // mémoriser la dernière route (sauf login/change-password)
+// -- utilise une clé par utilisateur : lastPath::<uid>
   useEffect(() => {
     if (!pathname) return;
     const authPaths = ['/admin/auth/login', '/admin/auth/change-password'];
-    if (!authPaths.includes(pathname)) {
-      try { localStorage.setItem('lastPath', pathname); } catch {}
-    }
+    if (authPaths.includes(pathname)) return;
+
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+
+    try { localStorage.setItem(`lastPath::${uid}`, pathname); } catch {}
   }, [pathname]);
+
 
   // gestion de la racine "/"
   useEffect(() => {
     if (pathname !== '/') return;
 
     const go = () => {
-      const isLogged = !!auth.currentUser;
-      if (isLogged) {
+      const u = auth.currentUser;
+      if (u) {
+        const uid = u.uid;
+        // On récupère le rôle stocké ou laisse vide
         const role = (typeof window !== 'undefined' && localStorage.getItem('userRole')) || '';
-        const lastPath = (typeof window !== 'undefined' && localStorage.getItem('lastPath')) || '';
-        if (role && lastPath && isPathAllowedForRole(role, lastPath)) {
-          router.replace(lastPath);
-        } else {
-          router.replace(routeForRole(role));
-        }
+        // On choisit la destination sûre (lastPath::<uid> validé par rôle, sinon routeForRole)
+        const { chooseLanding } = require('@/lib/safeRedirect');
+        router.replace(chooseLanding(uid, role));
       } else {
         router.replace('/admin/auth/login');
       }
     };
 
     go();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, router]);
+
 
   if (booting) {
     return (

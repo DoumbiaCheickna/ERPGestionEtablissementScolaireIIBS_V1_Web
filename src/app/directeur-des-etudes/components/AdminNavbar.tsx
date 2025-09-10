@@ -25,6 +25,7 @@ type MainItem =
   | "Etudiants"
   | "Professeurs"
   | "Filières"
+  | "Personnel" 
   | "Evaluations";
 
 const MAIN_MENU: MainItem[] = [
@@ -33,6 +34,7 @@ const MAIN_MENU: MainItem[] = [
   "Etudiants",
   "Professeurs",
   "Filières",
+  "Personnel",
   "Evaluations",
 ];
 
@@ -42,6 +44,7 @@ const ICONS: Record<MainItem, string> = {
   Etudiants: "bi-people",
   Professeurs: "bi-person-badge",
   Filières: "bi-layers",
+  Personnel: "bi-person-gear",
   Evaluations: "bi-bar-chart",
 };
 

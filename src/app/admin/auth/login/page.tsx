@@ -1,3 +1,4 @@
+//src/app/admin/auth/login/page.tsx
 'use client';
 
 import React, { useState } from 'react';
@@ -123,24 +124,38 @@ export default function Login() {
       localStorage.setItem('userLogin', userData?.login || sanitize(identifier));
       if (roleLabelFromUser) localStorage.setItem('userRole', roleLabelFromUser);
 
-      // Redirection
+      // ---------- Redirection (NOUVEAU) ----------
       if (firstLogin) {
         showSuccessToast('Connexion réussie — veuillez changer votre mot de passe.');
         router.replace('/admin/auth/change-password');
         return;
       }
-
-      // ➜ priorité au "lastPath" si autorisé pour le rôle
-      const lastPath = (typeof window !== 'undefined' && localStorage.getItem('lastPath')) || '';
-      if (roleLabelFromUser && lastPath && isPathAllowedForRole(roleLabelFromUser, lastPath)) {
-        router.replace(lastPath);
-        return;
+      // Résoudre le rôle (priorité au libellé direct, sinon via role_id)
+      let resolvedRole = roleLabelFromUser || '';
+      if (!resolvedRole && roleId) {
+        try {
+          const roleDoc = await getDoc(doc(db, 'roles', String(roleId)));
+          let roleName = roleDoc.exists() ? (roleDoc.data() as any)?.libelle || '' : '';
+          if (!roleName) {
+            const rs = await getDocs(
+              query(collection(db, 'roles'), where('id', '==', roleId), fbLimit(1))
+            );
+            if (!rs.empty) roleName = (rs.docs[0].data() as any)?.libelle || '';
+          }
+          if (roleName) resolvedRole = roleName;
+        } catch {/* ignore */}
       }
 
-      if (roleLabelFromUser) {
-        router.replace(routeForRole(roleLabelFromUser));
-        return;
-      }
+      // Mémos locaux utiles ailleurs
+      try {
+        localStorage.setItem('userLogin', userData?.login || sanitize(identifier));
+        if (resolvedRole) localStorage.setItem('userRole', resolvedRole);
+      } catch {}
+
+      // Choisir l’atterrissage: lastPath::<uid> validé par rôle, sinon routeForRole
+      const { chooseLanding } = await import('@/lib/safeRedirect');
+      router.replace(chooseLanding(uid, resolvedRole));
+      return;
 
       // Résolution par role_id si besoin
       if (roleId) {
