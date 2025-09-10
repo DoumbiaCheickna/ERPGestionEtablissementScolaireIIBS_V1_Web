@@ -4,8 +4,11 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "../../../../firebaseConfig";
-import { signOut, updatePassword } from "firebase/auth";
+import { signOut, updatePassword, updateProfile } from "firebase/auth";
 import NotificationsBell from "./NotificationsBell";
+// déjà exporté `storage` depuis firebaseConfig :
+import { storage } from "../../../../firebaseConfig";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
   collection,
   getDocs,
@@ -49,6 +52,7 @@ type UserInfo = {
   login: string;
   email: string;
   password?: string;
+  avatar_url?: string; 
 };
 
 
@@ -89,6 +93,18 @@ export default function AdminNavbar({
 
   // Drawer mobile
   const [openDrawer, setOpenDrawer] = React.useState(false);
+
+  // Édition infos
+const [editFirst, setEditFirst] = React.useState("");
+const [editLast, setEditLast] = React.useState("");
+const [editLogin, setEditLogin] = React.useState("");
+
+// Avatar
+const [avatarSrc, setAvatarSrc] = React.useState<string>("/avatar-woman.png");
+const [uploadingAvatar, setUploadingAvatar] = React.useState(false);
+const [savingProfile, setSavingProfile] = React.useState(false);
+const fileRef = React.useRef<HTMLInputElement | null>(null);
+
 
   // Dropdown avatar (topbar)
   const [openMenu, setOpenMenu] = React.useState(false);
@@ -154,6 +170,7 @@ export default function AdminNavbar({
       } else {
         const d = snap.docs[0];
         const data = d.data() as any;
+        const avatar = data.avatar_url || auth.currentUser?.photoURL || "/avatar-woman.png";
         setUserInfo({
           docId: d.id,
           prenom: data.prenom || "",
@@ -161,7 +178,12 @@ export default function AdminNavbar({
           login: data.login || "",
           email: data.email || "",
           password: data.password || "",
+          avatar_url: data.avatar_url || "",
         });
+        setEditFirst(data.prenom || "");
+        setEditLast(data.nom || "");
+        setEditLogin(data.login || "");
+        setAvatarSrc(avatar);
       }
     } catch (e) {
       console.error(e);
@@ -214,6 +236,88 @@ export default function AdminNavbar({
       setProfileError("Erreur lors de l’enregistrement.");
     } finally {
       setSavingPwd(false);
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userInfo) return;
+    setProfileError(null);
+    setProfileSuccess(null);
+    try {
+      setSavingProfile(true);
+      await updateDoc(doc(db, "users", userInfo.docId), {
+        prenom: editFirst.trim(),
+        nom: editLast.trim(),
+        login: editLogin.trim(),
+      });
+      setUserInfo({
+        ...userInfo,
+        prenom: editFirst.trim(),
+        nom: editLast.trim(),
+        login: editLogin.trim(),
+      });
+      setProfileSuccess("Profil mis à jour.");
+    } catch (err) {
+      console.error(err);
+      setProfileError("Impossible de mettre à jour le profil.");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handlePickAvatar = () => fileRef.current?.click();
+
+  const handleUploadAvatar: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !userInfo) return;
+    setProfileError(null);
+    setProfileSuccess(null);
+    setUploadingAvatar(true);
+    try {
+      // Chemin : avatars/<userId>/<nom-fichier>
+      const path = `avatars/${userInfo.docId}/${file.name}`;
+      const r = storageRef(storage, path);
+      await uploadBytes(r, file);
+      const url = await getDownloadURL(r);
+
+      // Enregistre Firestore + Auth photoURL
+      await updateDoc(doc(db, "users", userInfo.docId), { avatar_url: url });
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, { photoURL: url });
+      }
+
+      setAvatarSrc(url);
+      setUserInfo({ ...userInfo, avatar_url: url });
+      setProfileSuccess("Photo de profil mise à jour.");
+    } catch (err) {
+      console.error(err);
+      setProfileError("Échec de l’upload de la photo.");
+    } finally {
+      setUploadingAvatar(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  const handleResetAvatar = async () => {
+    if (!userInfo) return;
+    setProfileError(null);
+    setProfileSuccess(null);
+    try {
+      // Réinitialise le champ dans Firestore + Auth
+      await updateDoc(doc(db, "users", userInfo.docId), { avatar_url: "" });
+
+      const def = "/avatar-woman.png";
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, { photoURL: def });
+      }
+
+      setAvatarSrc(def);
+      setUserInfo({ ...userInfo, avatar_url: "" });
+      setProfileSuccess("Avatar réinitialisé.");
+    } catch (err) {
+      console.error(err);
+      setProfileError("Impossible de réinitialiser l’avatar.");
     }
   };
 
@@ -520,12 +624,13 @@ export default function AdminNavbar({
               aria-expanded={openMenu}
             >
               <img
-                src="/avatar-woman.png"
+                src={avatarSrc || auth.currentUser?.photoURL || "/avatar-woman.png"}
                 alt="Profil"
                 width={34}
                 height={34}
                 className="rounded-circle me-2"
               />
+
               <span className="d-none d-md-inline">Directeur</span>
               <i className="bi bi-caret-down-fill ms-2" />
             </button>
@@ -633,19 +738,79 @@ export default function AdminNavbar({
                   )}
 
                   {!loadingProfile && userInfo && (
-                    <>
-                      <div className="row g-3 mb-2">
+                  <>
+                    {/* ---- Avatar ---- */}
+                    <div className="d-flex align-items-center gap-3 mb-3">
+                      <img
+                        src={avatarSrc}
+                        alt="Avatar"
+                        width={64}
+                        height={64}
+                        className="rounded-circle border"
+                      />
+                      <div className="d-flex gap-2">
+                        <button
+                          type="button"
+                          className="btn btn-outline-primary btn-sm"
+                          onClick={handlePickAvatar}
+                          disabled={uploadingAvatar}
+                        >
+                          {uploadingAvatar ? (
+                            <>
+                              <span className="spinner-border spinner-border-sm me-2" />
+                              Upload…
+                            </>
+                          ) : (
+                            <>
+                              <i className="bi bi-upload me-1" />
+                              Changer la photo
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm"
+                          onClick={handleResetAvatar}
+                        >
+                          <i className="bi bi-arrow-counterclockwise me-1" />
+                          Avatar par défaut
+                        </button>
+                        <input
+                          ref={fileRef}
+                          type="file"
+                          accept="image/*"
+                          className="d-none"
+                          onChange={handleUploadAvatar}
+                        />
+                      </div>
+                    </div>
+
+                    {/* ---- Form infos ---- */}
+                    <form onSubmit={handleSaveProfile} className="mb-3">
+                      <div className="row g-3">
                         <div className="col-md-6">
                           <label className="form-label">Prénom</label>
-                          <input className="form-control" value={userInfo.prenom} readOnly />
+                          <input
+                            className="form-control"
+                            value={editFirst}
+                            onChange={(e) => setEditFirst(e.target.value)}
+                          />
                         </div>
                         <div className="col-md-6">
                           <label className="form-label">Nom</label>
-                          <input className="form-control" value={userInfo.nom} readOnly />
+                          <input
+                            className="form-control"
+                            value={editLast}
+                            onChange={(e) => setEditLast(e.target.value)}
+                          />
                         </div>
                         <div className="col-md-6">
                           <label className="form-label">Login</label>
-                          <input className="form-control" value={userInfo.login} readOnly />
+                          <input
+                            className="form-control"
+                            value={editLogin}
+                            onChange={(e) => setEditLogin(e.target.value)}
+                          />
                         </div>
                         <div className="col-md-6">
                           <label className="form-label">Email</label>
@@ -653,62 +818,77 @@ export default function AdminNavbar({
                         </div>
                       </div>
 
-                      <hr className="my-3" />
+                      <div className="d-flex justify-content-end gap-2 mt-3">
+                        <button type="submit" className="btn btn-primary" disabled={savingProfile}>
+                          {savingProfile ? (
+                            <>
+                              <span className="spinner-border spinner-border-sm me-2" />
+                              Enregistrement…
+                            </>
+                          ) : (
+                            "Enregistrer le profil"
+                          )}
+                        </button>
+                      </div>
+                    </form>
 
-                      <form onSubmit={handleSavePassword}>
-                        <div className="mb-2">
-                          <label className="form-label">Nouveau mot de passe</label>
-                          <input
-                            type="password"
-                            className="form-control"
-                            value={newPwd}
-                            onChange={(e) => setNewPwd(e.target.value)}
-                            placeholder="Au moins 6 caractères"
-                            minLength={6}
-                            required
-                          />
-                        </div>
-                        <div className="mb-3">
-                          <label className="form-label">Confirmer le mot de passe</label>
-                          <input
-                            type="password"
-                            className="form-control"
-                            value={newPwd2}
-                            onChange={(e) => setNewPwd2(e.target.value)}
-                            minLength={6}
-                            required
-                          />
-                        </div>
+                    <hr className="my-3" />
 
-                        {profileError && (
-                          <div className="alert alert-danger py-2">{profileError}</div>
-                        )}
-                        {profileSuccess && (
-                          <div className="alert alert-success py-2">{profileSuccess}</div>
-                        )}
+                    {/* ---- Form mot de passe (inchangé) ---- */}
+                    <form onSubmit={handleSavePassword}>
+                      <div className="mb-2">
+                        <label className="form-label">Nouveau mot de passe</label>
+                        <input
+                          type="password"
+                          className="form-control"
+                          value={newPwd}
+                          onChange={(e) => setNewPwd(e.target.value)}
+                          placeholder="Au moins 6 caractères"
+                          minLength={6}
+                          required
+                        />
+                      </div>
+                      <div className="mb-3">
+                        <label className="form-label">Confirmer le mot de passe</label>
+                        <input
+                          type="password"
+                          className="form-control"
+                          value={newPwd2}
+                          onChange={(e) => setNewPwd2(e.target.value)}
+                          minLength={6}
+                          required
+                        />
+                      </div>
 
-                        <div className="d-flex justify-content-end gap-2">
-                          <button
-                            type="button"
-                            className="btn btn-outline-secondary"
-                            onClick={() => setShowProfile(false)}
-                          >
-                            Fermer
-                          </button>
-                          <button type="submit" className="btn btn-primary" disabled={savingPwd}>
-                            {savingPwd ? (
-                              <>
-                                <span className="spinner-border spinner-border-sm me-2" />
-                                Enregistrement…
-                              </>
-                            ) : (
-                              "Enregistrer"
-                            )}
-                          </button>
-                        </div>
-                      </form>
-                    </>
-                  )}
+                      {profileError && (
+                        <div className="alert alert-danger py-2">{profileError}</div>
+                      )}
+                      {profileSuccess && (
+                        <div className="alert alert-success py-2">{profileSuccess}</div>
+                      )}
+
+                      <div className="d-flex justify-content-end gap-2">
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary"
+                          onClick={() => setShowProfile(false)}
+                        >
+                          Fermer
+                        </button>
+                        <button type="submit" className="btn btn-primary" disabled={savingPwd}>
+                          {savingPwd ? (
+                            <>
+                              <span className="spinner-border spinner-border-sm me-2" />
+                              Enregistrement…
+                            </>
+                          ) : (
+                            "Enregistrer"
+                          )}
+                        </button>
+                      </div>
+                    </form>
+                  </>
+                )}
 
                   {!loadingProfile && !userInfo && !profileError && (
                     <div className="text-muted">Aucune donnée à afficher.</div>
@@ -869,6 +1049,9 @@ export default function AdminNavbar({
         .sidebar-item:hover {
           background: rgba(255, 255, 255, 0.12);
           color: #ffffff;
+        }
+        :global(.btn-outline-primary.btn-sm), :global(.btn-outline-secondary.btn-sm) {
+          border-radius: 10px;
         }
         .sidebar-item.active {
           background: #ffffff;
