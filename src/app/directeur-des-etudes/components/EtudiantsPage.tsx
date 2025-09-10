@@ -52,6 +52,8 @@ type TUser = {
   matricule?: string;
   classe_id?: string | null;
   classe?: string;
+  classe2_id?: string | null;
+  classe2?: string;
   academic_year_id?: string | null; // ID (clé)
   annee_academique?: string;        // libellé
   parcours?: TParcoursEntry[];
@@ -272,6 +274,13 @@ export default function EtudiantsPage() {
     const [reinscBusy, setReinscBusy] = useState(false);
     const [reinscErr, setReinscErr] = useState<string | null>(null);
 
+    const [dualOpen, setDualOpen] = useState<null | TUser>(null);
+    const [dualClassId, setDualClassId] = useState('');
+    const [dualErr, setDualErr] = useState<string|null>(null);
+    const [dualBusy, setDualBusy] = useState(false);
+    const [dualChoices, setDualChoices] = useState<TClasse[]>([]);
+
+
     // Modales Voir / Modifier / Supprimer
     const [viewingId, setViewingId] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -292,22 +301,35 @@ export default function EtudiantsPage() {
             where('academic_year_id', '==', classe.academic_year_id)
           )
         );
+
+        // 1-bis) 👉 Étudiants affectés via classe2_id (NEW)
+        const snapA2 = await getDocs(
+          query(
+            collection(db, 'users'),
+            where('classe2_id', '==', classe.id),
+            where('academic_year_id', '==', classe.academic_year_id)
+          )
+        );
         const a: Map<string, TUser> = new Map();
-        snapA.forEach(d => {
-          const v = d.data() as any;
-          a.set(d.id, {
-            id: d.id,
-            prenom: String(v.prenom || ''),
-            nom: String(v.nom || ''),
-            email: String(v.email || ''),
-            telephone: String(v.telephone || ''),
-            matricule: String(v.matricule || ''),
-            classe_id: v.classe_id ?? null,
-            classe: String(v.classe || ''),
-            academic_year_id: String(v.academic_year_id || ''),
-            annee_academique: String(v.annee_academique || ''),
-            parcours: Array.isArray(v.parcours) ? v.parcours : [],
-            parcours_keys: Array.isArray(v.parcours_keys) ? v.parcours_keys : []
+        [snapA, snapA2].forEach(snap => {
+          snap.forEach(d => {
+            const v = d.data() as any;
+            a.set(d.id, {
+              id: d.id,
+              prenom: String(v.prenom || ''),
+              nom: String(v.nom || ''),
+              email: String(v.email || ''),
+              telephone: String(v.telephone || ''),
+              matricule: String(v.matricule || ''),
+              classe_id: v.classe_id ?? null,
+              classe: String(v.classe || ''),
+              classe2_id: v.classe2_id ?? null,        // 👈 new
+              classe2: String(v.classe2 || ''),        // 👈 new
+              academic_year_id: String(v.academic_year_id || ''),
+              annee_academique: String(v.annee_academique || ''),
+              parcours: Array.isArray(v.parcours) ? v.parcours : [],
+              parcours_keys: Array.isArray(v.parcours_keys) ? v.parcours_keys : []
+            });
           });
         });
 
@@ -353,6 +375,32 @@ export default function EtudiantsPage() {
 
     useEffect(() => { fetchStudents(); /* eslint-disable-next-line */ }, [classe.id, classe.academic_year_id]);
 
+    useEffect(()=>{
+      const loadDualChoices = async ()=>{
+        if(!dualOpen) return;
+        const snap = await getDocs(
+          query(collection(db,'classes'), where('academic_year_id','==', classe.academic_year_id))
+        );
+        const rows: TClasse[] = [];
+        snap.forEach(d => {
+          const v = d.data() as any;
+          rows.push({
+            id: d.id,
+            filiere_id: String(v.filiere_id),
+            filiere_libelle: String(v.filiere_libelle || ''),
+            niveau_id: String(v.niveau_id || ''),
+            niveau_libelle: String(v.niveau_libelle || ''),
+            libelle: String(v.libelle || ''),
+            academic_year_id: String(v.academic_year_id || '')
+          });
+        });
+        rows.sort((a,b)=>a.libelle.localeCompare(b.libelle));
+        setDualChoices(rows);
+      };
+      loadDualChoices();
+    },[dualOpen, classe.academic_year_id]);
+
+
     // Réinscription — charger classes selon l’année
     const loadClassesForYear = async (yearId: string) => {
       setReinscClasses([]);
@@ -380,6 +428,37 @@ export default function EtudiantsPage() {
         console.error(e);
       }
     };
+
+    const saveDual = async ()=>{
+      if(!dualOpen) return;
+      setDualErr(null);
+      if(!dualClassId) return setDualErr("Sélectionnez une classe.");
+      if(dualClassId === (dualOpen.classe_id || '')) {
+        return setDualErr("La 2e classe doit être différente de la classe principale.");
+      }
+      if(dualOpen.classe2_id) return setDualErr("Déjà 2 classes.");
+
+      const target = dualChoices.find(c=>c.id===dualClassId);
+      if(!target) return setDualErr("Classe introuvable.");
+
+      try{
+        setDualBusy(true);
+        await updateDoc(doc(db,'users', dualOpen.id), {
+          classe2_id: target.id,
+          classe2: target.libelle,
+        });
+        ok("2e classe ajoutée.");
+        setDualOpen(null);
+        setDualClassId('');
+        await fetchStudents();
+      }catch(e){
+        console.error(e);
+        setDualErr("Échec d’enregistrement.");
+      }finally{
+        setDualBusy(false);
+      }
+    };
+
 
     const doReinscrire = async () => {
       const targetUser = students.find(s => s.id === reinscOpen?.id);
@@ -493,7 +572,9 @@ export default function EtudiantsPage() {
                     {students.map(s => (
                       <tr key={s.id}>
                         <td className="text-muted">{s.matricule || '—'}</td>
-                        <td className="fw-semibold">{s.nom} {s.prenom}</td>
+                        <td className="fw-semibold">
+                          {s.nom} {s.prenom}
+                        </td>
                         <td className="text-muted">{s.email || '—'}</td>
                         <td className="text-muted">{s.telephone ? `+221 ${s.telephone}` : '—'}</td>
                         <td className="d-flex gap-1">
@@ -509,6 +590,33 @@ export default function EtudiantsPage() {
                           <button className="btn btn-outline-secondary btn-sm" onClick={()=>setReinscOpen(s)} title="Réinscrire">
                             <i className="bi bi-box-arrow-in-right" />
                           </button>
+                          <button
+                            className="btn btn-outline-warning btn-sm"
+                            title="Ajouter une 2e classe"
+                            onClick={()=>{
+                              if (s.classe2_id) { ok("Cet étudiant a déjà une 2e classe."); return; }
+                              setDualOpen(s); setDualErr(null); setDualClassId('');
+                            }}
+                          >
+                            <i className="bi bi-plus-circle" />
+                          </button>
+
+                          {/* ❌ Retirer la 2e classe (si présente) */}
+                          {s.classe2_id && (
+                            <button
+                              className="btn btn-outline-dark btn-sm"
+                              title="Retirer la 2e classe"
+                              onClick={async ()=>{
+                                try{
+                                  await updateDoc(doc(db,'users', s.id), { classe2_id: null, classe2: '' });
+                                  ok("2e classe retirée.");
+                                  fetchStudents();
+                                }catch(e){ console.error(e); ko("Échec de suppression de la 2e classe."); }
+                              }}
+                            >
+                              <i className="bi bi-x-circle" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -618,6 +726,45 @@ export default function EtudiantsPage() {
               </div>
             </div>
             <div className="modal-backdrop fade show" onClick={() => setReinscOpen(null)} />
+          </>
+        )}
+
+        {dualOpen && (
+          <>
+            <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
+              <div className="modal-dialog modal-dialog-centered">
+                <div className="modal-content">
+                  <div className="modal-header">
+                    <h5 className="modal-title">
+                      Ajouter une 2e classe — {dualOpen.nom} {dualOpen.prenom}
+                    </h5>
+                    <button className="btn-close" onClick={()=>setDualOpen(null)} />
+                  </div>
+                  <div className="modal-body">
+                    {dualErr && <div className="alert alert-danger">{dualErr}</div>}
+                    <div className="mb-3">
+                      <label className="form-label">Classe (même année)</label>
+                      <select className="form-select" value={dualClassId} onChange={e=>setDualClassId(e.target.value)}>
+                        <option value="">— Sélectionner —</option>
+                        {dualChoices.map(c=>(
+                          <option key={c.id} value={c.id} disabled={c.id===dualOpen.classe_id}>
+                            {c.libelle}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="form-text">Max 2 classes : la principale + cette 2e classe.</div>
+                    </div>
+                  </div>
+                  <div className="modal-footer">
+                    <button className="btn btn-outline-secondary" onClick={()=>setDualOpen(null)}>Annuler</button>
+                    <button className="btn btn-primary" onClick={saveDual} disabled={dualBusy}>
+                      {dualBusy ? (<><span className="spinner-border spinner-border-sm me-2"/>Enregistrement…</>) : "Enregistrer"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-backdrop fade show" onClick={()=>setDualOpen(null)} />
           </>
         )}
 
