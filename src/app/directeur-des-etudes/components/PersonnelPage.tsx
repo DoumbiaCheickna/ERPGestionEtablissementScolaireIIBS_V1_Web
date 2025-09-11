@@ -19,6 +19,10 @@ const ROLE_LABEL = "Assistant Directeur des Etudes";
 const ROLE_KEY = "assistant-directeur-des-etudes"; // normalisé
 const PER_PAGE = 10;
 
+/* --- petit cache mémoire process-local (jusqu’au refresh de page) --- */
+const memoryCache = new Map<string, TPerson[]>();
+const LIST_CACHE_KEY = "personnel:assistants";
+
 /* -------------------- Types simples pour la liste ------------------- */
 type TPerson = {
   id?: number;
@@ -59,65 +63,77 @@ export default function PersonnelPage() {
   // Suppression
   const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
 
+  // Garde-fou anti-concurrence
+  const lastLoadKeyRef = React.useRef<string>("");
+
   /* ---------------------- Chargement liste -------------------------- */
   const load = async () => {
+    const CK = LIST_CACHE_KEY;
+    lastLoadKeyRef.current = CK;
     setLoading(true);
     setErr(null);
-    try {
-      const col = collection(db, "users");
-      const q1 = query(col, where("role_libelle", "==", ROLE_LABEL));
-      const snap1 = await getDocs(q1);
 
-      let list: TPerson[] = [];
-      if (!snap1.empty) {
-        list = snap1.docs.map((d) => {
-          const v = d.data() as any;
-          return {
-            docId: d.id,
-            id: v.id,
-            nom: v.nom || "",
-            prenom: v.prenom || "",
-            email: v.email || "",
-            login: v.login || "",
-            telephone: v.telephone || "",
-            departement: v.departement || v["département"] || v.dept || "",
-            service: v.service || "",
-            role_libelle: v.role_libelle || "",
-          };
-        });
-      } else {
-        const q2 = query(col, where("role_key", "==", ROLE_KEY));
-        const snap2 = await getDocs(q2);
-        list = snap2.docs.map((d) => {
-          const v = d.data() as any;
-          return {
-            docId: d.id,
-            id: v.id,
-            nom: v.nom || "",
-            prenom: v.prenom || "",
-            email: v.email || "",
-            login: v.login || "",
-            telephone: v.telephone || "",
-            departement: v.departement || v["département"] || v.dept || "",
-            service: v.service || "",
-            role_libelle: v.role_libelle || "",
-          };
-        });
+    try {
+      // cache hit → rendu immédiat
+      if (memoryCache.has(CK)) {
+        if (lastLoadKeyRef.current === CK) {
+          setAll(memoryCache.get(CK)!);
+          setLoading(false);
+        }
+        return;
       }
 
-      // tri alpha: Nom puis Prénom
-      list.sort((a, b) => {
+      const usersCol = collection(db, "users");
+
+      // On lance les deux requêtes en parallèle (libellé et key), puis on fusionne
+      const [snapByLabel, snapByKey] = await Promise.all([
+        getDocs(query(usersCol, where("role_libelle", "==", ROLE_LABEL))),
+        getDocs(query(usersCol, where("role_key", "==", ROLE_KEY))),
+      ]);
+
+      // Fusion: Map par docId pour dédupliquer proprement
+      const byId = new Map<string, TPerson>();
+
+      const pushDoc = (d: any) => {
+        const v = d.data() as any;
+        byId.set(d.id, {
+          docId: d.id,
+          id: v.id,
+          nom: v.nom || "",
+          prenom: v.prenom || "",
+          email: v.email || "",
+          login: v.login || "",
+          telephone: v.telephone || "",
+          departement: v.departement || v["département"] || v.dept || "",
+          service: v.service || "",
+          role_libelle: v.role_libelle || "",
+        });
+      };
+
+      snapByLabel.forEach(pushDoc);
+      snapByKey.forEach(pushDoc);
+
+      // Liste + tri alpha: Nom puis Prénom
+      const list = Array.from(byId.values()).sort((a, b) => {
         const n = (a.nom || "").localeCompare(b.nom || "", "fr", { sensitivity: "base" });
         if (n !== 0) return n;
         return (a.prenom || "").localeCompare(b.prenom || "", "fr", { sensitivity: "base" });
       });
 
-      setAll(list);
+      // cache + rendu (si toujours la dernière requête)
+      memoryCache.set(CK, list);
+      if (lastLoadKeyRef.current === CK) {
+        setAll(list);
+      }
     } catch (e) {
       console.error(e);
-      setErr("Erreur de chargement.");
+      if (lastLoadKeyRef.current === LIST_CACHE_KEY) {
+        setErr("Erreur de chargement.");
+      }
     } finally {
-      setLoading(false);
+      if (lastLoadKeyRef.current === LIST_CACHE_KEY) {
+        setLoading(false);
+      }
     }
   };
 
@@ -169,6 +185,8 @@ export default function PersonnelPage() {
     try {
       await deleteDoc(doc(db, "users", deleteDocId));
       setDeleteDocId(null);
+      // invalide cache + reload
+      memoryCache.delete(LIST_CACHE_KEY);
       await load();
     } catch (e) {
       console.error(e);
@@ -367,6 +385,7 @@ export default function PersonnelPage() {
             onClose={() => setShowCreate(false)}
             onSaved={async () => {
               setShowCreate(false);
+              memoryCache.delete(LIST_CACHE_KEY); // invalide le cache
               await load();
             }}
           />
@@ -384,6 +403,7 @@ export default function PersonnelPage() {
             onClose={() => setEditDocId(null)}
             onSaved={async () => {
               setEditDocId(null);
+              memoryCache.delete(LIST_CACHE_KEY); // invalide le cache
               await load();
             }}
           />

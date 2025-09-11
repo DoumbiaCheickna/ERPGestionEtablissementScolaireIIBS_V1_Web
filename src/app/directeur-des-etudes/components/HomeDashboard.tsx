@@ -16,12 +16,40 @@ type TUser = {
   prenom?: string;
   nom?: string;
   role_libelle?: string;
-  academic_year_id?: string | null;
-  annee_academique?: string | null;
-  date_naissance?: string;   // attendu: 'YYYY-MM-DD'
+  role_key?: string;
+  academic_year_id?: string | null;   // ID d'année (préféré)
+  annee_academique?: string | null;   // label "YYYY-YYYY" (legacy)
+  date_naissance?: string;            // 'YYYY-MM-DD' ou 'DD/MM/YYYY'
   classe?: string;
   niveau_id?: 'L1'|'L2'|'L3'|'M1'|'M2'|string;
 };
+
+/* ------------------------- Helpers ------------------------- */
+const STUDENT_ROLE_LABELS = ['Etudiant','Étudiant','Student'];
+const STUDENT_ROLE_KEYS   = ['etudiant','étudiant','student'];
+const PROF_ROLE_LABELS    = ['Professeur','Enseignant','Teacher'];
+const PROF_ROLE_KEYS      = ['prof','enseignant','teacher'];
+
+/** vrai si l’utilisateur appartient à l’année sélectionnée */
+function userMatchesSelectedYear(u: TUser, yearId: string, yearLabel: string) {
+  // priorité à l'id (recommended)
+  if (u.academic_year_id && yearId && u.academic_year_id === yearId) return true;
+  // compat par libellé (legacy)
+  if (u.annee_academique && yearLabel && u.annee_academique === yearLabel) return true;
+  return false;
+}
+/** test rapide “est étudiant” */
+function isStudent(u: TUser) {
+  const l = (u.role_libelle || '').toLowerCase();
+  const k = (u.role_key || '').toLowerCase();
+  return STUDENT_ROLE_LABELS.some(x=>l.includes(x.toLowerCase())) || STUDENT_ROLE_KEYS.includes(k);
+}
+/** test rapide “est prof” */
+function isProf(u: TUser) {
+  const l = (u.role_libelle || '').toLowerCase();
+  const k = (u.role_key || '').toLowerCase();
+  return PROF_ROLE_LABELS.some(x=>l.includes(x.toLowerCase())) || PROF_ROLE_KEYS.includes(k);
+}
 
 export default function HomeDashboard({
   onOpenEtudiants,
@@ -30,6 +58,7 @@ export default function HomeDashboard({
 }) {
   const { years, selected, setSelectedById, createYear, updateYear, loading } = useAcademicYear();
   const selectedLabel = selected?.label || '';
+  const selectedId    = selected?.id || '';
 
   /* ------------------------- UI Année ------------------------- */
   const [showNewYear, setShowNewYear] = React.useState(false);
@@ -106,7 +135,7 @@ export default function HomeDashboard({
     (async () => {
       try {
         const login = typeof window !== 'undefined' ? localStorage.getItem('userLogin') : null;
-        const email = auth.currentUser?.email;
+        const email = auth.currentUser?.email || null;
         if (!login && !email) return;
         const q1 = login
           ? query(collection(db, 'users'), where('login', '==', login))
@@ -116,7 +145,7 @@ export default function HomeDashboard({
           const d: any = snap.docs[0].data();
           setPrenom(d?.prenom || '');
         }
-      } catch { /* ignore */ }
+      } catch {/* ignore */ }
     })();
   }, []);
 
@@ -130,80 +159,82 @@ export default function HomeDashboard({
   // pour la répartition et les anniversaires
   const [students, setStudents] = React.useState<TUser[]>([]);
 
-  const yearFilterFields: Array<'academic_year_id'|'annee_academique'> = ['academic_year_id','annee_academique'];
-
   const fetchCounts = React.useCallback(async () => {
-    if (!selectedLabel) return;
+    if (!selectedId && !selectedLabel) return;
     setLoadingStats(true);
     try {
-      // Étudiants + dataset pour filtres
-      // on récupère un échantillon large (ou tout si peu de données)
-      const studentRoles = ['Etudiant','Étudiant','Student'];
-      let stuSnap = await getDocs(
+      // --- Étudiants (dataset + count)
+      // large échantillon, on filtre côté client par année (id ou label legacy)
+      const stuSnap = await getDocs(
         query(
           collection(db, 'users'),
-          where('role_libelle', 'in', studentRoles),
+          where('role_libelle', 'in', STUDENT_ROLE_LABELS), // <= 10 values ok
           limit(500)
         )
       );
       let stu = stuSnap.docs.map(d => ({ docId: d.id, ...(d.data() as any) })) as TUser[];
-      // filtre année (supporte 2 clés possibles)
-      stu = stu.filter(s =>
-        (s.academic_year_id && s.academic_year_id === selectedLabel) ||
-        (s.annee_academique && s.annee_academique === selectedLabel)
-      );
+
+      // Ajoute un 2e lot basé sur role_key (au cas où role_libelle n'est pas uniforme)
+      if (STUDENT_ROLE_KEYS.length) {
+        const keySnap = await getDocs(
+          query(
+            collection(db, 'users'),
+            where('role_key', 'in', STUDENT_ROLE_KEYS),
+            limit(500)
+          )
+        );
+        const more = keySnap.docs.map(d => ({ docId: d.id, ...(d.data() as any) })) as TUser[];
+        // merge par docId
+        const seen = new Set(stu.map(s=>s.docId));
+        for (const x of more) if (!seen.has(x.docId)) stu.push(x);
+      }
+
+      stu = stu.filter(s => userMatchesSelectedYear(s, selectedId, selectedLabel));
       setStudents(stu);
       setNbEtudiants(stu.length);
 
-      // Profs
-      const profRoles = ['Professeur','Enseignant','Teacher'];
-      const profSnap = await getDocs(
-        query(
-          collection(db, 'users'),
-          where('role_libelle', 'in', profRoles),
-          limit(500)
-        )
+      // --- Profs
+      const profByLabelSnap = await getDocs(
+        query(collection(db, 'users'), where('role_libelle', 'in', PROF_ROLE_LABELS), limit(500))
       );
-      const profs = profSnap.docs
-        .map(d => d.data() as any)
-        .filter(p =>
-          (p.academic_year_id && p.academic_year_id === selectedLabel) ||
-          (p.annee_academique && p.annee_academique === selectedLabel)
+      let profs: TUser[] = profByLabelSnap.docs.map(d => ({ ...(d.data() as any), docId: d.id })) as any;
+
+      if (PROF_ROLE_KEYS.length) {
+        const profByKeySnap = await getDocs(
+          query(collection(db, 'users'), where('role_key', 'in', PROF_ROLE_KEYS), limit(500))
         );
+        const more = profByKeySnap.docs.map(d => ({ ...(d.data() as any), docId: d.id })) as any;
+        const seen = new Set(profs.map(p=>p.docId));
+        for (const x of more) if (!seen.has(x.docId)) profs.push(x);
+      }
+      profs = profs.filter(p => userMatchesSelectedYear(p, selectedId, selectedLabel));
       setNbProfs(profs.length);
 
-      // Filières
+      // --- Filières (compte serveur)
       let fCount = 0;
       try {
-        const c = await getCountFromServer(
-          query(collection(db, 'filieres'), where('academic_year_id','==',selectedLabel))
-        );
-        fCount = c.data().count;
+        // privilégie l'ID d'année s'il existe dans les docs
+        const qId = query(collection(db, 'filieres'), where('academic_year_id','==', selectedId || '__none__'));
+        fCount = (await getCountFromServer(qId)).data().count;
       } catch { /* peut ne pas exister */ }
       if (fCount === 0) {
         try {
-          const c = await getCountFromServer(
-            query(collection(db, 'filieres'), where('annee_academique','==',selectedLabel))
-          );
-          fCount = c.data().count;
+          const qLbl = query(collection(db, 'filieres'), where('annee_academique','==', selectedLabel || '__none__'));
+          fCount = (await getCountFromServer(qLbl)).data().count;
         } catch {}
       }
       setNbFilieres(fCount);
 
-      // Classes
+      // --- Classes (compte serveur)
       let clCount = 0;
       try {
-        const c = await getCountFromServer(
-          query(collection(db, 'classes'), where('academic_year_id','==',selectedLabel))
-        );
-        clCount = c.data().count;
+        const qId = query(collection(db, 'classes'), where('academic_year_id','==', selectedId || '__none__'));
+        clCount = (await getCountFromServer(qId)).data().count;
       } catch {}
       if (clCount === 0) {
         try {
-          const c = await getCountFromServer(
-            query(collection(db, 'classes'), where('annee_academique','==',selectedLabel))
-          );
-          clCount = c.data().count;
+          const qLbl = query(collection(db, 'classes'), where('annee_academique','==', selectedLabel || '__none__'));
+          clCount = (await getCountFromServer(qLbl)).data().count;
         } catch {}
       }
       setNbClasses(clCount);
@@ -213,7 +244,7 @@ export default function HomeDashboard({
     } finally {
       setLoadingStats(false);
     }
-  }, [db, selectedLabel]);
+  }, [selectedId, selectedLabel]);
 
   React.useEffect(() => { fetchCounts(); }, [fetchCounts]);
 
@@ -221,14 +252,12 @@ export default function HomeDashboard({
   const [niveauFilter, setNiveauFilter] = React.useState<'ALL'|'L1'|'L2'|'L3'|'M1'|'M2'>('ALL');
   const niveauxList: Array<'L1'|'L2'|'L3'|'M1'|'M2'> = ['L1','L2','L3','M1','M2'];
   const repartition = React.useMemo(() => {
-    // compter par niveau depuis students
     const base = new Map(niveauxList.map(n => [n, 0]));
     for (const s of students) {
       const n = (s.niveau_id || '').toUpperCase() as any;
       if (base.has(n)) base.set(n, (base.get(n) || 0) + 1);
     }
     const rows = niveauxList.map(k => ({ k, v: base.get(k) || 0 }));
-    // applique filtre si ≠ ALL
     if (niveauFilter !== 'ALL') {
       return rows.map(r => ({ ...r, v: r.k === niveauFilter ? r.v : 0 }));
     }
@@ -249,15 +278,16 @@ export default function HomeDashboard({
           query(collection(db, 'users'), orderBy('created_at', 'desc'), limit(300))
         );
         const all = snap.docs.map(d => ({ docId: d.id, ...(d.data() as any) })) as TUser[];
-        // Filtre année (si renseignée sur l’utilisateur)
+        // Filtre année (id prioritaire, puis label legacy si présent)
         const inYear = all.filter(u =>
-          !selectedLabel ||
-          (u.academic_year_id === selectedLabel) || (u.annee_academique === selectedLabel)
+          !selectedId && !selectedLabel
+            ? true
+            : userMatchesSelectedYear(u, selectedId, selectedLabel)
         );
         setBirthdays(inYear);
       } catch {/* ignore */}
     })();
-  }, [selectedLabel]);
+  }, [selectedId, selectedLabel]);
 
   const yyyy_mm_dd = (d: Date) => {
     const y = d.getFullYear();
@@ -271,7 +301,6 @@ export default function HomeDashboard({
     const key = mm_dd(selectedDay);
     return birthdays.filter(b => {
       if (!b.date_naissance) return false;
-      // support 'YYYY-MM-DD' ou 'DD/MM/YYYY'
       const v = b.date_naissance.includes('-')
         ? b.date_naissance.slice(5)
         : b.date_naissance.slice(3,5) + '-' + b.date_naissance.slice(0,2);
@@ -296,13 +325,8 @@ export default function HomeDashboard({
   };
   const matrix = buildMonthMatrix(calRefDate);
 
-  /* ------------------------- Sparkline pour “activité” ------------------------- */
-  const sparkVals = React.useMemo(() => {
-    // mini série à partir des répartitions
-    const arr = repartition.map(r => r.v || 0);
-    const max = Math.max(1, ...arr);
-    return arr.map((v,i) => ({ x: (i/(arr.length-1))*100, y: 100 - (v/max)*100 }));
-  }, [repartition]);
+  /* ------------------------- Sparkline (barres) ------------------------- */
+  const totalFiltre = React.useMemo(() => repartition.reduce((a,b)=>a+b.v,0), [repartition]);
 
   /* ------------------------- UI ------------------------- */
   return (
@@ -349,11 +373,9 @@ export default function HomeDashboard({
               if (selectedLabel) {
                 try { localStorage.setItem('app.selectedAnnee', selectedLabel); } catch {}
               }
-              // 👉 Déclenche la même action que le menu
               if (onOpenEtudiants) {
                 onOpenEtudiants();
               } else {
-                // fallback (au cas où le parent n’a pas passé le callback)
                 window.location.href = selectedLabel
                   ? `/directeur-des-etudes/etudiants?annee=${encodeURIComponent(selectedLabel)}`
                   : `/directeur-des-etudes/etudiants`;
@@ -391,7 +413,7 @@ export default function HomeDashboard({
           { label: 'Professeurs', icon: 'bi-person-badge', value: nbProfs },
           { label: 'Filières', icon: 'bi-diagram-3', value: nbFilieres },
           { label: 'Classes', icon: 'bi-columns-gap', value: nbClasses },
-        ].map((kpi, i) => (
+        ].map((kpi) => (
           <div key={kpi.label} className="col-12 col-sm-6 col-lg-3">
             <div className="card border-0 shadow-sm h-100 rounded-4">
               <div className="card-body">
@@ -406,7 +428,7 @@ export default function HomeDashboard({
         ))}
       </div>
 
-      {/* Répartition + mini calendrier (colonne droite) */}
+      {/* Répartition + mini calendrier */}
       <div className="row g-3 mb-4">
         <div className="col-12 col-xl-8">
           <div className="card border-0 shadow-sm rounded-4 h-100">
@@ -428,7 +450,6 @@ export default function HomeDashboard({
                     <span className="small">{n.v}</span>
                   </div>
                   <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}>
-                    {/* largeur relative basée sur max */}
                     <div
                       className="progress-bar"
                       style={{
@@ -439,10 +460,10 @@ export default function HomeDashboard({
                 </div>
               ))}
 
-              {/* mini bar chart propre (remplace le sparkline) */}
+              {/* mini bar chart */}
               <div className="mt-3 d-flex align-items-end gap-2" aria-hidden="true">
                 {repartition.map((r, i) => {
-                  const h = Math.max(6, Math.round((r.v / Math.max(1, nbEtudiants)) * 48)); // hauteur 6–48px
+                  const h = Math.max(6, Math.round((r.v / Math.max(1, nbEtudiants)) * 48));
                   return (
                     <div
                       key={i}
@@ -460,7 +481,7 @@ export default function HomeDashboard({
                 })}
               </div>
               <div className="small text-muted mt-1">
-                Total filtré : <strong>{repartition.reduce((a,b)=>a+b.v,0)}</strong> / {nbEtudiants}
+                Total filtré : <strong>{totalFiltre}</strong> / {nbEtudiants}
               </div>
             </div>
           </div>
@@ -493,7 +514,7 @@ export default function HomeDashboard({
                 {['L','M','M','J','V','S','D'].map((d,i)=>
                   <div key={i} className="mini-cal-cell mini-cal-head">{d}</div>
                 )}
-                {matrix.map((d, idx) => {
+                {buildMonthMatrix(calRefDate).map((d, idx) => {
                   const inMonth = d.getMonth() === calRefDate.getMonth();
                   const isSel = yyyy_mm_dd(d) === yyyy_mm_dd(selectedDay);
                   const hasBirth = birthdays.some(b => {

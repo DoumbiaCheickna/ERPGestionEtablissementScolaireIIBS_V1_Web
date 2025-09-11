@@ -113,6 +113,27 @@ const toISODate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
 
+
+
+// NEW: cache mémoire simple (par page/onglet)
+const memoryCache = new Map<string, unknown>();
+
+const cacheGet = <T=any>(key: string): T | undefined =>
+  memoryCache.get(key) as T | undefined;
+
+const cacheSet = (key: string, value: unknown) =>
+  memoryCache.set(key, value);
+
+const cacheDel = (key: string) => memoryCache.delete(key);
+
+// Optionnel: invalider par préfixe (utile après mutations)
+const cacheDelPrefix = (prefix: string) => {
+  for (const k of Array.from(memoryCache.keys())) {
+    if (k.startsWith(prefix)) memoryCache.delete(k);
+  }
+};
+
+
 /* ========================= Composant principal ========================= */
 
 export default function EtudiantsPage() {
@@ -159,6 +180,15 @@ export default function EtudiantsPage() {
   // Chargement filières (section + année)
   useEffect(() => {
     const load = async () => {
+      const cacheKey = `filieres:${section}:${academicYearId}`;
+      const cached = cacheGet<TFiliere[]>(cacheKey);
+      if (cached) {
+        setFilieres(cached);
+        setSelectedFiliere(prev => (prev && cached.find(r => r.id === prev.id)) ? prev : (cached[0] ?? null));
+        setFilieresForForm(cached.map(r => ({ id: r.id, libelle: r.libelle })));
+        return; // 👈 instantané si déjà en cache
+      }
+
       try {
         const snap = await getDocs(
           query(
@@ -177,27 +207,39 @@ export default function EtudiantsPage() {
             academic_year_id: String(v.academic_year_id || '')
           });
         });
-        rows.sort((a, b) => a.libelle.localeCompare(b.libelle));
+        rows.sort((a,b)=>a.libelle.localeCompare(b.libelle));
+
+        // write cache
+        cacheSet(cacheKey, rows);
+
         setFilieres(rows);
-        setSelectedFiliere(prev => {
-          if (prev && rows.find(r => r.id === prev.id)) return prev;
-          return rows[0] ?? null;
-        });
+        setSelectedFiliere(prev => (prev && rows.find(r => r.id === prev.id)) ? prev : (rows[0] ?? null));
         setFilieresForForm(rows.map(r => ({ id: r.id, libelle: r.libelle })));
-      } catch (e) {
+      } catch(e) {
         console.error(e);
         ko('Erreur de chargement des filières.');
       }
     };
+
     if (academicYearId) load();
     else { setFilieres([]); setSelectedFiliere(null); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, academicYearId]);
 
+
   // Charger classes de la filière sélectionnée
   useEffect(() => {
     const loadClasses = async () => {
       if (!selectedFiliere) { setClasses([]); return; }
+
+      const cacheKey = `classes:${selectedFiliere.id}:${selectedFiliere.academic_year_id}`;
+      const cached = cacheGet<TClasse[]>(cacheKey);
+      if (cached) {
+        setClasses(cached);
+        setClsPage(1);
+        return; // 👈 instantané si déjà en cache
+      }
+
       setClsLoading(true);
       try {
         const snap = await getDocs(
@@ -220,7 +262,11 @@ export default function EtudiantsPage() {
             academic_year_id: String(v.academic_year_id || '')
           });
         });
-        rows.sort((a, b) => a.libelle.localeCompare(b.libelle));
+        rows.sort((a,b)=>a.libelle.localeCompare(b.libelle));
+
+        // write cache
+        cacheSet(cacheKey, rows);
+
         setClasses(rows);
         setClsPage(1);
       } catch (e) {
@@ -230,8 +276,10 @@ export default function EtudiantsPage() {
         setClsLoading(false);
       }
     };
+
     loadClasses();
   }, [selectedFiliere]);
+
 
   // Meta pour formulaire (rôles, niveaux, partenaires)
   useEffect(() => {
@@ -289,10 +337,19 @@ export default function EtudiantsPage() {
     // Ajouter étudiant (formulaire)
     const openAdd = () => setShowAddStudent(true);
     const closeAdd = () => setShowAddStudent(false);
+    const cacheKeyStudents = `students:${classe.id}:${classe.academic_year_id}`;
+    const invalidateStudentsCache = () => cacheDel(cacheKeyStudents);
 
-    const fetchStudents = async () => {
-      setLoading(true);
+
+    const fetchStudents = async (force = false) => {
+      const cached = !force ? cacheGet<TUser[]>(cacheKeyStudents) : undefined;
+      setLoading(!cached); 
       try {
+
+        if (cached) {
+          setStudents(cached);
+          return;
+        }
         // 1) Étudiants inscrits via les champs top-level
         const snapA = await getDocs(
           query(
@@ -364,6 +421,7 @@ export default function EtudiantsPage() {
         const list = Array.from(a.values()).sort((x, y) =>
           (x.nom + ' ' + x.prenom).localeCompare(y.nom + ' ' + y.prenom)
         );
+        cacheSet(cacheKeyStudents, list);
         setStudents(list);
       } catch (e) {
         console.error(e);
@@ -450,7 +508,8 @@ export default function EtudiantsPage() {
         ok("2e classe ajoutée.");
         setDualOpen(null);
         setDualClassId('');
-        await fetchStudents();
+        invalidateStudentsCache();
+        await fetchStudents(true);   // 👈 force
       }catch(e){
         console.error(e);
         setDualErr("Échec d’enregistrement.");
@@ -517,7 +576,8 @@ export default function EtudiantsPage() {
         setReinscYear('');
         setReinscClassId('');
         setReinscClasses([]);
-        fetchStudents();
+        invalidateStudentsCache();
+        fetchStudents(true);         // 👈 force
       } catch (e) {
         console.error(e);
         setReinscErr('Impossible de réinscrire cet étudiant.');
@@ -610,10 +670,11 @@ export default function EtudiantsPage() {
                                 try{
                                   await updateDoc(doc(db,'users', s.id), { classe2_id: null, classe2: '' });
                                   ok("2e classe retirée.");
-                                  fetchStudents();
+                                  invalidateStudentsCache();      // 👈
+                                  await fetchStudents(true);      // 👈 force
                                 }catch(e){ console.error(e); ko("Échec de suppression de la 2e classe."); }
                               }}
-                            >
+                              >
                               <i className="bi bi-x-circle" />
                             </button>
                           )}
@@ -653,7 +714,12 @@ export default function EtudiantsPage() {
                       defaultNiveauId={classe.niveau_id}
                       defaultFiliereId={classe.filiere_id}
                       defaultClasse={{ id: classe.id, libelle: classe.libelle }}
-                      onCreated={() => { closeAdd(); }}
+                      onCreated={() => {
+                        invalidateStudentsCache();
+                        closeAdd();
+                        fetchStudents(true);       // 👈 force un refetch
+                      }}
+
                     />
                   </div>
                 </div>
@@ -783,7 +849,12 @@ export default function EtudiantsPage() {
             classeContexte={classe}
             years={years}
             onClose={()=>setEditingId(null)}
-            onSaved={async ()=>{ setEditingId(null); await fetchStudents(); ok('Étudiant modifié.'); }}
+            onSaved={async ()=>{
+              setEditingId(null);
+              invalidateStudentsCache();
+              await fetchStudents(true); // 👈 force
+              ok('Étudiant modifié.');
+            }}
           />
         )}
 
@@ -796,7 +867,8 @@ export default function EtudiantsPage() {
               try{
                 await deleteDoc(doc(db,'users', deleting.id));
                 setDeleting(null);
-                await fetchStudents();
+                invalidateStudentsCache();
+                await fetchStudents(true);   // 👈 force
                 ok('Étudiant supprimé.');
               }catch(e){
                 console.error(e);
@@ -872,7 +944,13 @@ export default function EtudiantsPage() {
 
           <button
             className="btn btn-outline-secondary btn-sm"
-            onClick={() => { setSelectedFiliere(f => f ? { ...f } : f); }}
+            onClick={() => {
+              if (selectedFiliere) {
+                cacheDelPrefix(`classes:${selectedFiliere.id}:`);
+                cacheDelPrefix(`filieres:${section}:${academicYearId}`);
+                setSelectedFiliere(f => f ? { ...f } : f); // retriggere les effets
+              }
+            }}
           >
             Actualiser vue
           </button>

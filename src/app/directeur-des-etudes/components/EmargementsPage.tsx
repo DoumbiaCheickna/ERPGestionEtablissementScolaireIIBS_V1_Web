@@ -174,6 +174,29 @@ const formatMinutes = (mins: number) => {
   return `${h} h ${m} min`;
 };
 
+
+
+// NEW: cache mémoire simple (par page/onglet)
+const memoryCache = new Map<string, unknown>();
+
+const cacheGet = <T=any>(key: string): T | undefined =>
+  memoryCache.get(key) as T | undefined;
+
+const cacheSet = (key: string, value: unknown) =>
+  memoryCache.set(key, value);
+
+const cacheDel = (key: string) => memoryCache.delete(key);
+
+// Optionnel: invalider par préfixe (utile après mutations)
+const cacheDelPrefix = (prefix: string) => {
+  if (!prefix) return; // garde-fou
+  for (const k of Array.from(memoryCache.keys())) {
+    if (k.startsWith(prefix)) memoryCache.delete(k);
+  }
+};
+
+
+
 /* ========================= Page ========================= */
 
 export default function EmargementsPage() {
@@ -254,6 +277,7 @@ export default function EmargementsPage() {
       }
       setShowClosure(false);
       ok("Fermeture enregistrée.");
+      cacheDelPrefix(`closures:${academicYearId}`);
     } catch (e: any) {
       console.error(e);
       ko(e?.message || "Échec de l’enregistrement.");
@@ -266,6 +290,16 @@ export default function EmargementsPage() {
   useEffect(() => {
     const load = async () => {
       if (!academicYearId) { setFilieres([]); setSelectedFiliere(null); return; }
+
+      const cacheKey = `filieres:${section}:${academicYearId}`;
+      const cached = cacheGet<TFiliere[]>(cacheKey);
+      if (cached) {
+        setFilieres(cached);
+        setSelectedFiliere(prev => (prev && cached.find(r => r.id === prev.id)) ? prev : (cached[0] ?? null));
+        setOpenedClasse(null);
+        return;
+      }
+
       try {
         const snap = await getDocs(
           query(
@@ -285,6 +319,9 @@ export default function EmargementsPage() {
           });
         });
         rows.sort((a, b) => a.libelle.localeCompare(b.libelle));
+
+        cacheSet(cacheKey, rows); // 👈
+
         setFilieres(rows);
         setSelectedFiliere((prev) => (prev && rows.find((r) => r.id === prev.id)) ? prev : (rows[0] ?? null));
         setOpenedClasse(null);
@@ -294,10 +331,16 @@ export default function EmargementsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, academicYearId]);
 
+
   /* ===== Charger classes de la filière ===== */
   useEffect(() => {
     const load = async () => {
       if (!selectedFiliere) { setClasses([]); return; }
+
+      const cacheKey = `classes:${selectedFiliere.id}:${selectedFiliere.academic_year_id}`;
+      const cached = cacheGet<TClasse[]>(cacheKey);
+      if (cached) { setClasses(cached); return; }
+
       try {
         const snap = await getDocs(
           query(
@@ -320,6 +363,9 @@ export default function EmargementsPage() {
           });
         });
         rows.sort((a, b) => a.libelle.localeCompare(b.libelle));
+
+        cacheSet(cacheKey, rows); // 👈
+
         setClasses(rows);
       } catch (e) { console.error(e); ko("Erreur de chargement des classes."); }
     };
@@ -384,7 +430,22 @@ export default function EmargementsPage() {
           <button className="btn btn-outline-danger btn-sm" onClick={openClosure}>
             <i className="bi bi-slash-circle me-1" /> Pas de cours (fermeture)
           </button>
-          <button className="btn btn-outline-secondary btn-sm" onClick={() => setSelectedFiliere((f) => (f ? { ...f } : f))}>
+          <button
+            className="btn btn-outline-secondary btn-sm"
+            onClick={() => {
+              if (selectedFiliere) {
+                cacheDelPrefix(`classes:${selectedFiliere.id}:`);
+              }
+              cacheDelPrefix(`filieres:${section}:${academicYearId}`);
+              cacheDelPrefix(`edtmat:${openedClasse?.id || ''}:${academicYearId}:`);
+              cacheDelPrefix(`students:${openedClasse?.id || ''}:`);
+              cacheDelPrefix(`closures:${academicYearId}`);
+              cacheDelPrefix(`overrides:${academicYearId}`);
+              cacheDelPrefix(`makeups:${academicYearId}`);
+              // force un “re-run” des effets
+              setSelectedFiliere(f => f ? { ...f } : f);
+            }}
+          >
             Actualiser vue
           </button>
         </div>
@@ -627,6 +688,15 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
   useEffect(() => {
     const load = async () => {
       setLoading(true);
+      const cacheKey = `edtmat:${classe.id}:${yearId}:${semestre}`;
+      const cached = cacheGet<{matieres: Record<string, TMatiere>; slots: TEDTSlot[]}>(cacheKey);
+      if (cached) {
+        setMatieres(cached.matieres);
+        setSlots(cached.slots);
+        setLoading(false);
+        return;
+      }
+
       try {
         // matières
         const snapM = await getDocs(
@@ -657,6 +727,8 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
           ss.forEach((s) => slotsAll.push(s));
         });
 
+        cacheSet(cacheKey, { matieres: m, slots: slotsAll }); // 👈
+
         setMatieres(m);
         setSlots(slotsAll);
       } catch (e) { console.error(e); }
@@ -669,8 +741,12 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
   /* ====== Charger étudiants de la classe (pour enrichir infos) ====== */
   useEffect(() => {
     const fetchStudents = async () => {
-      setStuLoading(true);
+      const cacheKey = `students:${classe.id}:${classe.academic_year_id}`;
+      const cached = cacheGet<TUser[]>(cacheKey);
+      setStuLoading(!cached);
       try {
+        if (cached) { setStudents(cached); return; }
+
         const bag = new Map<string, TUser>();
         const push = (d: any) => {
           const v = d.data() as any;
@@ -706,6 +782,7 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
         }
 
         const list = Array.from(bag.values());
+        cacheSet(cacheKey, list); // 👈
         setStudents(list);
       } catch (e) { console.error(e); }
       finally { setStuLoading(false); }
@@ -717,6 +794,10 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
   useEffect(() => {
     const loadYearMeta = async () => {
       if (!yearId) return setYearMeta({});
+      const cacheKey = `yearMeta:${yearId}`;
+      const cached = cacheGet<{start?:Date; end?:Date}>(cacheKey);
+      if (cached) { setYearMeta(cached); return; }
+
       try {
         const yref = doc(db, "annees_scolaires", yearId);
         const ydoc = await getDoc(yref);
@@ -724,7 +805,9 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
           const v = ydoc.data() as any;
           const sd = v.date_debut?.toDate?.() ?? null;
           const ed = v.date_fin?.toDate?.() ?? null;
-          setYearMeta({ start: sd || undefined, end: ed || undefined });
+          const meta = { start: sd || undefined, end: ed || undefined };
+          cacheSet(cacheKey, meta); // 👈
+          setYearMeta(meta);
         } else { setYearMeta({}); }
       } catch (e) { console.error(e); setYearMeta({}); }
     };
@@ -734,6 +817,10 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
   /* ====== Closures & Overrides ====== */
   useEffect(() => {
     const loadClosures = async () => {
+      const cacheKey = `closures:${yearId}`;
+      const cached = cacheGet<TClosureRule[]>(cacheKey);
+      if (cached) { setClosures(cached); return; }
+
       try {
         const arr: TClosureRule[] = [];
         const snap = await getDocs(collection(db, `years/${yearId}/closures`));
@@ -752,6 +839,7 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
             label: v.label || undefined,
           });
         });
+        cacheSet(cacheKey, arr); // 👈
         setClosures(arr);
       } catch (e) { console.error(e); setClosures([]); }
     };
@@ -760,6 +848,10 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
 
   useEffect(() => {
     const loadOverrides = async () => {
+      const cacheKey = `overrides:${yearId}`;
+      const cached = cacheGet<TSessionOverride[]>(cacheKey);
+      if (cached) { setOverrides(cached); return; }
+
       try {
         const arr: TSessionOverride[] = [];
         const snap = await getDocs(collection(db, `years/${yearId}/session_overrides`));
@@ -779,6 +871,7 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
             reason: v.reason,
           });
         });
+        cacheSet(cacheKey, arr); // 👈
         setOverrides(arr);
       } catch (e) { console.error(e); setOverrides([]); }
     };
@@ -788,6 +881,10 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
   /* ====== Makeups (rattrapage) ====== */
   useEffect(() => {
     const loadMakeups = async () => {
+      const cacheKey = `makeups:${yearId}`;
+      const cached = cacheGet<TMakeup[]>(cacheKey);
+      if (cached) { setMakeups(cached); return; }
+
       try {
         const arr: TMakeup[] = [];
         const snap = await getDocs(collection(db, `years/${yearId}/makeup_sessions`));
@@ -806,6 +903,7 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
             semestre: String(v.semestre || "S1") as TSemestre,
           });
         });
+        cacheSet(cacheKey, arr); // 👈
         setMakeups(arr);
       } catch (e) { console.error(e); setMakeups([]); }
     };
@@ -866,12 +964,15 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
       setAbsents([]);
       if (selectedIndex === null) return;
       const st = sessionsWithStatus[selectedIndex];
-      if (!st || st.neutralized) return; // rien à lire si neutralisée
+      if (!st || st.neutralized) return;
       const slot = st.slot;
 
-      try {
-        const d = startOfDay(fromISODate(dateStr));
+      const d = startOfDay(fromISODate(dateStr));
+      const slotKey = `abs:${classe.id}:${yearId}:${semestre}:${toISODate(d)}:mat:${slot.matiere_id}:${slot.start}-${slot.end}`;
+      const cached = cacheGet<typeof absents>(slotKey);
+      if (cached) { setAbsents(cached); return; }
 
+      try {
         const snap = await getDocs(
           query(
             collection(db, "emargements"),
@@ -885,14 +986,12 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
           )
         );
 
-        if (snap.empty) { setAbsents([]); return; }
+        if (snap.empty) { cacheSet(slotKey, []); setAbsents([]); return; }
 
         const doc0 = snap.docs[0];
         const data = doc0.data() as SeanceDoc & Record<string, any>;
 
         const rows: Array<{matricule:string; nom:string; email?:string; telephone?:string; entries:AbsenceEntry[]}> = [];
-
-        // Tous les champs array = matricules absents
         for (const k of Object.keys(data)) {
           const val = (data as any)[k];
           if (Array.isArray(val)) {
@@ -907,8 +1006,9 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
             });
           }
         }
-
         rows.sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
+
+        cacheSet(slotKey, rows); // 👈
         setAbsents(rows);
       } catch (e) { console.error(e); }
     };
@@ -988,7 +1088,11 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
         enseignant: mkEns || mat?.assigned_prof_name || "",
         semestre,
       });
+      // dans saveMakeup() après addDoc(...)
+      cacheDelPrefix(`makeups:${yearId}`); // 👈
       setShowMakeup(false);
+      // (tu gardes quand même l’optimisme local setMakeups(prev => [...prev, ...]))
+
       // recharge localement (simple, sans re-fetch complet)
       setMakeups(prev => [...prev, {
         id: Math.random().toString(36).slice(2),

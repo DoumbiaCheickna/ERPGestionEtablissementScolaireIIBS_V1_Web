@@ -72,6 +72,58 @@ const DEFAULT_NIVEAUX: TNiveauDoc[] = [
   { id: "M2", libelle: "Master 2", order: 5 },
 ];
 
+/* ================= Cache mémoire + helpers ================= */
+type CacheEntry<T> = { ts: number; data: T };
+const _CACHE = new Map<string, CacheEntry<any>>();
+const CACHE_TTL_MS = 30_000; // 30s (à ajuster)
+
+const now = () => Date.now();
+const ck = (k: unknown) => JSON.stringify(k);
+
+/** Lecture avec TTL ; calcule et met en cache si manquant/expiré */
+async function cached<T>(key: any, fetcher: () => Promise<T>, ttl = CACHE_TTL_MS): Promise<T> {
+  const K = ck(key);
+  const hit = _CACHE.get(K);
+  if (hit && now() - hit.ts < ttl) return hit.data as T;
+  const data = await fetcher();
+  _CACHE.set(K, { ts: now(), data });
+  return data;
+}
+
+/** Invalidation ciblée par prédicat de clé */
+function invalidateWhere(pred: (key: string) => boolean) {
+  for (const k of _CACHE.keys()) if (pred(k)) _CACHE.delete(k);
+}
+
+/** Helpers d’invalidation par collection / paramètres fréquents */
+function invCol(col: string) {
+  invalidateWhere((k) => k.includes(`"col":"${col}"`));
+}
+function invByYear(col: string, yearId: string) {
+  invalidateWhere((k) => k.includes(`"col":"${col}"`) && k.includes(`"year":"${yearId}"`));
+}
+function invByClass(col: string, classId: string) {
+  invalidateWhere((k) => k.includes(`"col":"${col}"`) && k.includes(`"class":"${classId}"`));
+}
+function invByFiliere(col: string, filiereId: string) {
+  invalidateWhere((k) => k.includes(`"col":"${col}"`) && k.includes(`"filiere":"${filiereId}"`));
+}
+
+/** Petits wrappers pour `getDocs` + `query(...)` */
+async function getDocsCached<T>(
+  keyParts: Record<string, any>,
+  q: ReturnType<typeof query>
+): Promise<Array<{ id: string; data: any }>> {
+  const key = { ...keyParts, col: (q as any)._query?.path?.segments?.[0] ?? "unknown" };
+  return cached(key, async () => {
+    const snap = await getDocs(q);
+    const rows: Array<{ id: string; data: any }> = [];
+    snap.forEach((d) => rows.push({ id: d.id, data: d.data() }));
+    return rows;
+  });
+}
+
+
 /* =============== Modal de confirmation "danger" réutilisable =============== */
 function ConfirmDeleteModal({
   show,

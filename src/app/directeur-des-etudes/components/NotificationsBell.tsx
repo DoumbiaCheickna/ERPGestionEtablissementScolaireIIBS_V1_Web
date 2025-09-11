@@ -4,7 +4,7 @@
 import React from "react";
 import {
   collection, query, where, onSnapshot,
-  addDoc, getDocs, setDoc, doc, deleteDoc,
+  addDoc, getDocs, setDoc, doc, deleteDoc, limit,
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
 import { useAcademicYear } from "../context/AcademicYearContext";
@@ -84,13 +84,18 @@ export default function NotificationsBell() {
   const [unread, setUnread] = React.useState(0);
   const menuRef = React.useRef<HTMLDivElement|null>(null);
 
+  // Garde-fous de génération (évite scans répétés la même session)
+  const genInFlightRef = React.useRef(false);
+  const lastBirthdayISORef = React.useRef<string | null>(null); // e.g. "2025-09-11"
+  const lastAbsWeekRef = React.useRef<string | null>(null);     // e.g. "2025-W37"
+
   // Live subscribe sans index composite (pas d'orderBy serveur)
   React.useEffect(() => {
-    const q = query(
+    const qy = query(
       collection(db, "notifications"),
       where("audience_role", "==", "directeur")
     );
-    const unsub = onSnapshot(q, snap => {
+    const unsub = onSnapshot(qy, snap => {
       const arr: NotificationDoc[] = [];
       snap.forEach(d => arr.push({ id: d.id, ...(d.data() as any) }));
 
@@ -119,16 +124,31 @@ export default function NotificationsBell() {
 
   // Génération (à l’ouverture du menu)
   const ensureTodayNotifications = async () => {
-    if (!yearId) { setOpen(true); return; }
+    // ouvre toujours instantanément, mais lance la génération en arrière-plan contrôlé
+    setOpen(true);
+
+    if (!yearId) return;
+    if (genInFlightRef.current) return;
+
+    const todayISO = toISODate(new Date());
+    const wk = weekKeyISO(new Date());
+    const needBirth = lastBirthdayISORef.current !== todayISO;
+    const needAbs = lastAbsWeekRef.current !== wk;
+
+    if (!needBirth && !needAbs) return;
+
+    genInFlightRef.current = true;
     setLoadingGen(true);
     try {
       await Promise.all([
-        generateBirthdayToday(),
-        generateAbsenceAlertsThisWeek(yearId),
+        needBirth ? generateBirthdayToday() : Promise.resolve(),
+        needAbs ? generateAbsenceAlertsThisWeek(yearId) : Promise.resolve(),
       ]);
+      if (needBirth) lastBirthdayISORef.current = todayISO;
+      if (needAbs) lastAbsWeekRef.current = wk;
     } finally {
       setLoadingGen(false);
-      setOpen(true);
+      genInFlightRef.current = false;
     }
   };
 
@@ -155,7 +175,8 @@ export default function NotificationsBell() {
       const dedup_key = `birthday::${toISODate(today)}::${u.id}`;
       const exists = await getDocs(query(
         collection(db, "notifications"),
-        where("dedup_key", "==", dedup_key)
+        where("dedup_key", "==", dedup_key),
+        limit(1)
       ));
       if (!exists.empty) continue; // déjà créé
 
@@ -242,7 +263,8 @@ export default function NotificationsBell() {
         const dedup_key = `absence::${weekKey}::${matricule}`;
         const exists = await getDocs(query(
           collection(db, "notifications"),
-          where("dedup_key", "==", dedup_key)
+          where("dedup_key", "==", dedup_key),
+          limit(1)
         ));
         if (exists.empty) {
           await addDoc(collection(db, "notifications"), {
@@ -260,14 +282,38 @@ export default function NotificationsBell() {
     }
   };
 
-  // actions
+  // actions (optimistes)
   const markRead = async (id?: string) => {
     if (!id) return;
-    await setDoc(doc(db, "notifications", id), { read: true }, { merge: true });
+    // optimiste
+    const prev = items;
+    setItems(prev.map(n => (n.id === id ? { ...n, read: true } : n)));
+    setUnread(u => Math.max(0, u - 1));
+
+    try {
+      await setDoc(doc(db, "notifications", id), { read: true }, { merge: true });
+    } catch (e) {
+      // rollback si erreur
+      setItems(prev);
+      setUnread(prev.filter(n => !n.read).length);
+    }
   };
+
   const removeOne = async (id?: string) => {
     if (!id) return;
-    await deleteDoc(doc(db, "notifications", id));
+    // optimiste
+    const prev = items;
+    const next = prev.filter(n => n.id !== id);
+    setItems(next);
+    setUnread(next.filter(n => !n.read).length);
+
+    try {
+      await deleteDoc(doc(db, "notifications", id));
+    } catch (e) {
+      // rollback si erreur
+      setItems(prev);
+      setUnread(prev.filter(n => !n.read).length);
+    }
   };
 
   return (

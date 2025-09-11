@@ -1,5 +1,10 @@
 // firebaseConfig.ts
 import { initializeApp, getApps, getApp, FirebaseOptions } from 'firebase/app';
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getAuth } from 'firebase/auth';
@@ -17,6 +22,12 @@ const firebaseConfig: FirebaseOptions = {
 // ✅ évite “Firebase App named ‘[DEFAULT]’ already exists”
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-export const db = getFirestore(app);
+// NEW: Firestore avec cache persistant (IndexedDB) + gestion multi-onglets
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
+});
+
 export const auth = getAuth(app);
 export const storage = getStorage(app);

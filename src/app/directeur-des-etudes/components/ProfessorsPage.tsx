@@ -21,6 +21,10 @@ import Toast from "../../admin/components/ui/Toast";
 import ProfesseurForm from "../../admin/pages/users/professeurForm";
 import { useAcademicYear } from "../context/AcademicYearContext";
 
+
+// NEW: petit cache mémoire process-local (reste le temps du rafraîchissement de page)
+const memoryCache = new Map<string, TUserRow[]>();
+
 /* ------------------------------------------------------------------ */
 const ROLE_PROF_KEY = "prof";
 const PER_PAGE = 10;
@@ -127,6 +131,10 @@ type ProfesseurFormProps = {
   onSaved?: () => void;
 };
 const ProfesseurFormTyped = ProfesseurForm as unknown as React.ComponentType<ProfesseurFormProps>;
+// NEW: clé de cache par année (utilise id sinon label sinon 'all')
+const cacheKeyForYear = (yearId: string, yearLabel: string) =>
+  `professeurs:${yearId || yearLabel || 'all'}`;
+
 
 /* ------------------------------------------------------------------ */
 
@@ -134,6 +142,9 @@ export default function ProfessorsPage() {
   const { selected } = useAcademicYear();
   const selectedYearId = selected?.id || "";
   const selectedYearLabel = selected?.label || "";
+
+  const lastLoadKeyRef = React.useRef<string>("");
+
 
   /* === Référentiels === */
   const [roles, setRoles] = useState<TRole[]>([]);
@@ -397,82 +408,110 @@ export default function ProfessorsPage() {
 
   /* ---------------------- Liste des profs (année) ------------------- */
   const fetchProfsForYear = async (yearId: string, yearLabel: string) => {
-    setLoading(true);
-    try {
-      if (!yearId && !yearLabel) {
+  const CK = cacheKeyForYear(yearId, yearLabel);
+  lastLoadKeyRef.current = CK;   // marque cette requête comme la plus récente
+  setLoading(true);
+
+  try {
+    // 1) Cache hit → rendu immédiat (et stop)
+    if (memoryCache.has(CK)) {
+      if (lastLoadKeyRef.current === CK) {
+        setAll(memoryCache.get(CK)!);
+        setLoading(false);
+      }
+      return;
+    }
+
+    // 2) Aucune année → liste vide + cache vide
+    if (!yearId && !yearLabel) {
+      memoryCache.set(CK, []);
+      if (lastLoadKeyRef.current === CK) {
         setAll([]);
-        return;
+        setLoading(false);
       }
+      return;
+    }
 
-      const rowsMap = new Map<string, TUserRow>();
+    // 3) Construction de la liste
+    const rowsMap = new Map<string, TUserRow>();
 
-      // A) Tous les users "prof" → filtre côté client (tolérant schémas)
-      try {
-        const uq = query(collection(db, "users"), where("role_key", "==", ROLE_PROF_KEY));
-        const usnap = await getDocs(uq);
-        usnap.forEach((d) => {
-          const v = d.data() as DocumentData;
-          if (matchesSelectedYear(v, yearId, yearLabel)) {
-            rowsMap.set(d.id, {
-              docId: d.id,
-              id: v.id,
-              nom: v.nom || "",
-              prenom: v.prenom || "",
-              specialite: v.specialite || v.specialty || "",
-              role_id: v.role_id !== undefined && v.role_id !== null ? String(v.role_id) : undefined,
-              role_libelle: v.role_libelle,
-              role_key: v.role_key,
-            });
-          }
-        });
-      } catch (e) {
-        console.warn("users query failed", e);
-      }
-
-      // B) Union avec les profs ayant une affectation sur l’année
-      if (yearId) {
-        const affQ = query(collection(db, "affectations_professeurs"), where("annee_id", "==", yearId));
-        const affSnap = await getDocs(affQ);
-
-        const profIds = new Set<string>();
-        affSnap.forEach((d) => {
-          const v = d.data() as any;
-          const fromField = v?.prof_doc_id ? String(v.prof_doc_id) : "";
-          const fromKey = d.id.includes("__") ? d.id.split("__")[1] : "";
-          const id = fromField || fromKey;
-          if (id) profIds.add(id);
-        });
-
-        await Promise.all(
-          Array.from(profIds).map(async (pid) => {
-            if (rowsMap.has(pid)) return; // déjà ajouté via (A)
-            const uref = doc(db, "users", pid);
-            const usnap = await getDoc(uref);
-            if (!usnap.exists()) return;
-            const v = usnap.data() as DocumentData;
-            if (v.role_key !== ROLE_PROF_KEY) return;
-            rowsMap.set(usnap.id, {
-              docId: usnap.id,
-              id: v.id,
-              nom: v.nom || "",
-              prenom: v.prenom || "",
-              specialite: v.specialite || v.specialty || "",
-              role_id: v.role_id !== undefined && v.role_id !== null ? String(v.role_id) : undefined,
-              role_libelle: v.role_libelle,
-              role_key: v.role_key,
-            });
-          })
-        );
-      }
-
-      setAll(Array.from(rowsMap.values()));
+    // --- A) users (role_key == "prof") + filtre année côté client
+    try {
+      const uq = query(collection(db, "users"), where("role_key", "==", ROLE_PROF_KEY));
+      const usnap = await getDocs(uq);
+      usnap.forEach((d) => {
+        const v = d.data() as DocumentData;
+        if (matchesSelectedYear(v, yearId, yearLabel)) {
+          rowsMap.set(d.id, {
+            docId: d.id,
+            id: v.id,
+            nom: v.nom || "",
+            prenom: v.prenom || "",
+            specialite: v.specialite || v.specialty || "",
+            role_id: v.role_id !== undefined && v.role_id !== null ? String(v.role_id) : undefined,
+            role_libelle: v.role_libelle,
+            role_key: v.role_key,
+          });
+        }
+      });
     } catch (e) {
-      console.error(e);
-      ko("Erreur lors du chargement des professeurs.");
-    } finally {
+      console.warn("users query failed", e);
+    }
+
+    // --- B) union avec profs présents dans les affectations de l’année
+    if (yearId) {
+      const affQ = query(collection(db, "affectations_professeurs"), where("annee_id", "==", yearId));
+      const affSnap = await getDocs(affQ);
+
+      const profIds = new Set<string>();
+      affSnap.forEach((d) => {
+        const v = d.data() as any;
+        const fromField = v?.prof_doc_id ? String(v.prof_doc_id) : "";
+        const fromKey = d.id.includes("__") ? d.id.split("__")[1] : "";
+        const id = fromField || fromKey;
+        if (id) profIds.add(id);
+      });
+
+      await Promise.all(
+        Array.from(profIds).map(async (pid) => {
+          if (rowsMap.has(pid)) return;
+          const uref = doc(db, "users", pid);
+          const usnap = await getDoc(uref);
+          if (!usnap.exists()) return;
+          const v = usnap.data() as DocumentData;
+          if (v.role_key !== ROLE_PROF_KEY) return;
+          rowsMap.set(usnap.id, {
+            docId: usnap.id,
+            id: v.id,
+            nom: v.nom || "",
+            prenom: v.prenom || "",
+            specialite: v.specialite || v.specialty || "",
+            role_id: v.role_id !== undefined && v.role_id !== null ? String(v.role_id) : undefined,
+            role_libelle: v.role_libelle,
+            role_key: v.role_key,
+          });
+        })
+      );
+    }
+
+    // 4) Finalisation + cache
+    const rows = Array.from(rowsMap.values());
+    memoryCache.set(CK, rows);
+
+    // N’applique l’état que si cette requête est toujours la dernière déclenchée
+    if (lastLoadKeyRef.current === CK) {
+      setAll(rows);
+    }
+  } catch (e) {
+    console.error(e);
+    ko("Erreur lors du chargement des professeurs.");
+  } finally {
+    if (lastLoadKeyRef.current === CK) {
       setLoading(false);
     }
-  };
+  }
+};
+
 
   const bootstrap = async () => {
     await Promise.all([fetchRoles(), fetchFilieres(), fetchClasses(), fetchMatieres(), fetchAnnees()]);
@@ -484,7 +523,13 @@ export default function ProfessorsPage() {
 
   // Quand l’année sélectionnée change → recharge la liste des profs
   useEffect(() => {
-    fetchProfsForYear(selectedYearId, selectedYearLabel);
+    const CK = cacheKeyForYear(selectedYearId, selectedYearLabel); // NEW
+    if (memoryCache.has(CK)) {                                     // NEW
+      setAll(memoryCache.get(CK)!);                                // NEW
+      setLoading(false);                                           // NEW
+    } else {
+      fetchProfsForYear(selectedYearId, selectedYearLabel);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYearId, selectedYearLabel]);
 
@@ -568,6 +613,7 @@ export default function ProfessorsPage() {
       await deleteDoc(doc(db, "users", deleteDocId));
       setShowDelete(false);
       setDeleteDocId(null);
+      memoryCache.delete(cacheKeyForYear(selectedYearId, selectedYearLabel)); // NEW
       await fetchProfsForYear(selectedYearId, selectedYearLabel);
       ok("Professeur supprimé.");
     } catch (e: any) {
@@ -788,6 +834,7 @@ export default function ProfessorsPage() {
       setAssignOk("Affectations enregistrées.");
 
       if (selectedYearId === year) {
+        memoryCache.delete(cacheKeyForYear(selectedYearId, selectedYearLabel)); 
         await fetchProfsForYear(selectedYearId, selectedYearLabel);
       }
       if (assignForDocId) await loadAssignFor(year, assignForDocId);
@@ -817,6 +864,7 @@ export default function ProfessorsPage() {
         { merge: true }
       );
       ok("Professeur transféré sur l’année sélectionnée.");
+      memoryCache.delete(cacheKeyForYear(selectedYearId, selectedYearLabel));
       await fetchProfsForYear(selectedYearId, selectedYearLabel);
     } catch (e) {
       console.error(e);
@@ -853,6 +901,7 @@ export default function ProfessorsPage() {
       }
 
       ok("Professeur retiré de l’année sélectionnée.");
+      memoryCache.delete(cacheKeyForYear(selectedYearId, selectedYearLabel)); // NEW
       await fetchProfsForYear(selectedYearId, selectedYearLabel);
     } catch (e) {
       console.error(e);
@@ -905,6 +954,7 @@ export default function ProfessorsPage() {
       setShowTransfer(false);
       setTransferDocId(null);
       ok("Professeur transféré.");
+      memoryCache.delete(cacheKeyForYear(selectedYearId, selectedYearLabel)); // NEW
       await fetchProfsForYear(selectedYearId, selectedYearLabel);
     } catch (e) {
       console.error(e);
@@ -1105,8 +1155,11 @@ export default function ProfessorsPage() {
             onClose={() => setShowCreate(false)}
             onSaved={async () => {
               setShowCreate(false);
+              // NEW: invalide le cache de l'année courante
+              memoryCache.delete(cacheKeyForYear(selectedYearId, selectedYearLabel)); // NEW
               await fetchProfsForYear(selectedYearId, selectedYearLabel);
             }}
+
           />
           <div className="modal-backdrop fade show" onClick={() => setShowCreate(false)} />
         </>
@@ -1122,8 +1175,11 @@ export default function ProfessorsPage() {
             onClose={() => setEditDocId(null)}
             onSaved={async () => {
               setEditDocId(null);
+              // NEW
+              memoryCache.delete(cacheKeyForYear(selectedYearId, selectedYearLabel)); // NEW
               await fetchProfsForYear(selectedYearId, selectedYearLabel);
             }}
+
           />
           <div className="modal-backdrop fade show" onClick={() => setEditDocId(null)} />
         </>
