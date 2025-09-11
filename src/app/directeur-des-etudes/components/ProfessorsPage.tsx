@@ -512,7 +512,6 @@ export default function ProfessorsPage() {
   }
 };
 
-
   const bootstrap = async () => {
     await Promise.all([fetchRoles(), fetchFilieres(), fetchClasses(), fetchMatieres(), fetchAnnees()]);
   };

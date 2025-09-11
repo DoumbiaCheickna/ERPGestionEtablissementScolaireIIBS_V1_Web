@@ -11,14 +11,17 @@ import EtudiantsPage from "./components/EtudiantsPage";
 import EmargementsPage from "./components/EmargementsPage";
 import PersonnelPage from "./components/PersonnelPage";
 import { visibleTabsForRole } from "@/lib/permissions";
+import EmargementsProfsPage from "./components/EmargementsProfsPage";
+
 
 type MainItem =
   | "Accueil"
-  | "Emargements"
+  | "EmargementsEtudiants"
+  | "EmargementsProfesseurs"
   | "Etudiants"
   | "Professeurs"
   | "Filières"
-  | "Personnel" 
+  | "Personnel"
   | "Evaluations"
   | null;
 
@@ -45,7 +48,8 @@ export default function DirecteurHomePage() {
     "Professeurs",
     "Filières",
     "Etudiants",
-    "Emargements",
+    "EmargementsEtudiants",
+    "EmargementsProfesseurs",
     "Personnel",
   ];
   const showSecondary = active !== null && !HIDE_SECONDARY.includes(active);
@@ -70,16 +74,18 @@ export default function DirecteurHomePage() {
             {active === "Professeurs" && <ProfessorsPage />}
             {active === "Filières" && <FilieresPage />}
             {active === "Etudiants" && <EtudiantsPage />}
-            {active === "Emargements" && <EmargementsPage />}
-            {active === "Personnel" && <PersonnelPage />} 
+            {active === "EmargementsEtudiants" && <EmargementsPage />}
+            {active === "Personnel" && <PersonnelPage />}
+            {active === "EmargementsProfesseurs" && <EmargementsProfsPage />}
 
             {/* Placeholder autres onglets */}
             {active &&
-              active !== "Accueil" && 
+              active !== "Accueil" &&
               active !== "Professeurs" &&
               active !== "Filières" &&
               active !== "Etudiants" &&
-              active !== "Emargements" &&
+              active !== "EmargementsEtudiants" &&
+              active !== "EmargementsProfesseurs" &&
               active !== "Personnel" && (
                 <div className="card shadow-sm">
                   <div className="card-body">

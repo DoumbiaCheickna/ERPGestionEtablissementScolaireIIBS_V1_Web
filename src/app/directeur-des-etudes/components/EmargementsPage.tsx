@@ -195,8 +195,6 @@ const cacheDelPrefix = (prefix: string) => {
   }
 };
 
-
-
 /* ========================= Page ========================= */
 
 export default function EmargementsPage() {

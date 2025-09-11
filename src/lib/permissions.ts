@@ -1,6 +1,8 @@
+//src/lib/permissions.ts
 export type TabKey =
   | "Accueil"
-  | "Emargements"
+  | "EmargementsEtudiants"
+  | "EmargementsProfesseurs"
   | "Etudiants"
   | "Professeurs"
   | "Filières"
@@ -8,7 +10,7 @@ export type TabKey =
   | "Evaluations";
 
 export const ALL_TABS: TabKey[] = [
-  "Accueil","Emargements","Etudiants","Professeurs","Filières","Personnel","Evaluations"
+  "Accueil","EmargementsEtudiants","EmargementsProfesseurs","Etudiants","Professeurs","Filières","Personnel","Evaluations"
 ];
 
 // Normalise le rôle depuis localStorage (ex: "Assistant Directeur des Etudes")

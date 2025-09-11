@@ -21,7 +21,8 @@ import {
 
 type MainItem =
   | "Accueil"
-  | "Emargements"
+  | "EmargementsEtudiants"
+  | "EmargementsProfesseurs"
   | "Etudiants"
   | "Professeurs"
   | "Filières"
@@ -30,7 +31,8 @@ type MainItem =
 
 const MAIN_MENU: MainItem[] = [
   "Accueil",
-  "Emargements",
+  "EmargementsEtudiants",
+  "EmargementsProfesseurs",
   "Etudiants",
   "Professeurs",
   "Filières",
@@ -40,13 +42,26 @@ const MAIN_MENU: MainItem[] = [
 
 const ICONS: Record<MainItem, string> = {
   Accueil: "bi-house-door",
-  Emargements: "bi-clipboard-check",
+  EmargementsEtudiants: "bi-clipboard-check",
+  EmargementsProfesseurs: "bi-clipboard-data",
   Etudiants: "bi-people",
   Professeurs: "bi-person-badge",
   Filières: "bi-layers",
   Personnel: "bi-person-gear",
   Evaluations: "bi-bar-chart",
 };
+
+const LABELS: Record<MainItem, React.ReactNode> = {
+  Accueil: "Accueil",
+  EmargementsEtudiants: "Émargements des\n étudiants", // ⬅️ 2 lignes
+  EmargementsProfesseurs: "Émargements des\n professeurs",
+  Etudiants: "Étudiants",
+  Professeurs: "Professeurs",
+  "Filières": "Filières",
+  Personnel: "Personnel",
+  Evaluations: "Evaluations",
+};
+
 
 type UserInfo = {
   docId: string;
@@ -703,7 +718,7 @@ const fileRef = React.useRef<HTMLInputElement | null>(null);
             role="menuitem"
           >
             <i className={`${ICONS[item]} me-2`} />
-            <span>{item}</span>
+            <span className="tab-label">{LABELS[item]}</span>
             {active === item && <i className="bi bi-chevron-right ms-auto" />}
           </button>
         ))}
@@ -1041,10 +1056,10 @@ const fileRef = React.useRef<HTMLInputElement | null>(null);
           object-fit: contain;
         }
         .sidebar-menu {
-          padding: 0.6rem;
+          padding: .5rem .5rem;
           display: flex;
           flex-direction: column;
-          gap: 0.35rem;
+          gap: .28rem;
           overflow: auto;
         }
         .sidebar-item {
@@ -1053,20 +1068,22 @@ const fileRef = React.useRef<HTMLInputElement | null>(null);
           background: rgba(255, 255, 255, 0.06);
           color: #e7eeff;
           text-align: left;
-          padding: 0.48rem 0.72rem;
-          border-radius: 12px;
+          padding: .42rem .64rem;;
+          border-radius: 11px;
           font-weight: 500;
-          font-size: 0.93rem;
+          font-size: .90rem;
           cursor: pointer;
           transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
           display: flex;
           align-items: center;
           gap: 0.5rem;
+          line-height: 1.15;
         }
         .sidebar-item:hover {
           background: rgba(255, 255, 255, 0.12);
           color: #ffffff;
         }
+        .tab-label { white-space: pre-line; display: inline-block; word-break: break-word; }
         :global(.btn-outline-primary.btn-sm), :global(.btn-outline-secondary.btn-sm) {
           border-radius: 10px;
         }
