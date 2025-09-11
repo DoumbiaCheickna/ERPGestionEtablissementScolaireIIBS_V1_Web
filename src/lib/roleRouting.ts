@@ -15,7 +15,12 @@ export function routeForRole(roleLabel: string): string {
     n.includes("directeur") ||
     n.includes("director");
 
-  if (isDirector) return "/directeur-des-etudes";
+  const isAssistantDirector =
+    n.includes("assistant directeur des etudes") ||
+    n.includes("assistant-directeur") ||
+    n.includes("assistant director");
+
+  if (isDirector || isAssistantDirector) return "/directeur-des-etudes";
   if (n === "admin" || n.includes("administrateur")) return "/admin/home";
 
   return "/admin/home";
@@ -30,7 +35,10 @@ export function isPathAllowedForRole(role: RoleName, path: string): boolean {
 
   if (r.includes("admin")) return true; // admin partout
 
-  if (r.includes("directeur")) {
+  const isDirector = r.includes("directeur");
+  const isAssistantDirector = r.includes("assistant") && r.includes("directeur");
+
+  if (isDirector || isAssistantDirector) {
     return p.startsWith("/directeur-des-etudes") || p.startsWith("/admin/auth");
   }
   if (r.includes("prof")) {

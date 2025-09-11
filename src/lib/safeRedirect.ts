@@ -1,3 +1,4 @@
+// src/lib/safeRedirect.ts
 import { isPathAllowedForRole, routeForRole } from './roleRouting';
 
 /** Lit le lastPath propre à l’utilisateur et le re-valide par rôle */

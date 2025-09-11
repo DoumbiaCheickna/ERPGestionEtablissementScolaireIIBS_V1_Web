@@ -10,6 +10,7 @@ import FilieresPage from "./components/FilieresPage";
 import EtudiantsPage from "./components/EtudiantsPage";
 import EmargementsPage from "./components/EmargementsPage";
 import PersonnelPage from "./components/PersonnelPage";
+import { visibleTabsForRole } from "@/lib/permissions";
 
 type MainItem =
   | "Accueil"
@@ -22,7 +23,21 @@ type MainItem =
   | null;
 
 export default function DirecteurHomePage() {
+  const [roleLabel, setRoleLabel] = React.useState<string>("");
   const [active, setActive] = React.useState<MainItem>("Accueil");
+
+  // NEW: au montage, on lit userRole dans localStorage
+  React.useEffect(() => {
+    try { setRoleLabel(localStorage.getItem("userRole") || ""); } catch {}
+  }, []);
+
+  // NEW: calcule la liste d’onglets autorisés selon le rôle
+  const allowedTabs = React.useMemo(() => visibleTabsForRole(roleLabel), [roleLabel]);
+
+  // NEW: si un onglet devient masqué, on retombe sur "Accueil"
+  React.useEffect(() => {
+    if (active && !allowedTabs.includes(active)) setActive("Accueil");
+  }, [allowedTabs, active]);
 
   // Tu peux réactiver le secondary menu pour d’autres onglets si besoin
   const HIDE_SECONDARY: Exclude<MainItem, null>[] = [
@@ -38,7 +53,7 @@ export default function DirecteurHomePage() {
   return (
     <div className="page-root">
       {/* Topbar + Sidebar (dans AdminNavbar) */}
-      <AdminNavbar active={active} onChange={setActive} />
+      <AdminNavbar active={active} onChange={setActive} allowedTabs={allowedTabs} />
 
       {/* Bande d’arrière-plan + conteneur centré */}
       <div className="content-container">

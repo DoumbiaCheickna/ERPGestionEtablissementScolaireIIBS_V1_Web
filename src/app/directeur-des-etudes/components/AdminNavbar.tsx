@@ -80,9 +80,11 @@ const includesLoose = (hay: string, needle: string) =>
 export default function AdminNavbar({
   active,
   onChange,
+  allowedTabs = [],
 }: {
   active: MainItem | null;
   onChange: (item: MainItem) => void;
+  allowedTabs?: string[]; 
 }) {
   const router = useRouter();
 
@@ -498,6 +500,17 @@ const fileRef = React.useRef<HTMLInputElement | null>(null);
     }
   };
 
+  const TABS: MainItem[] = allowedTabs.length
+  ? (MAIN_MENU.filter(t => allowedTabs.includes(t)) as MainItem[])
+  : MAIN_MENU;
+
+  React.useEffect(() => {
+    if (active && !TABS.includes(active)) {
+      onChange("Accueil");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [TABS]);
+
   return (
     <>
       {/* ===== TOPBAR ===== */}
@@ -678,22 +691,23 @@ const fileRef = React.useRef<HTMLInputElement | null>(null);
         </div>
 
         <nav className="sidebar-menu" role="menu">
-          {MAIN_MENU.map((item) => (
-            <button
-              key={item}
-              className={`sidebar-item ${active === item ? "active" : ""}`}
-              onClick={() => {
-                onChange(item);
-                setOpenDrawer(false);
-              }}
-              role="menuitem"
-            >
-              <i className={`${ICONS[item]} me-2`} />
-              <span>{item}</span>
-              {active === item && <i className="bi bi-chevron-right ms-auto" />}
-            </button>
-          ))}
-        </nav>
+        {/* NEW: map sur TABS au lieu de MAIN_MENU */}
+        {TABS.map((item) => (
+          <button
+            key={item}
+            className={`sidebar-item ${active === item ? "active" : ""}`}
+            onClick={() => {
+              onChange(item);
+              setOpenDrawer(false);
+            }}
+            role="menuitem"
+          >
+            <i className={`${ICONS[item]} me-2`} />
+            <span>{item}</span>
+            {active === item && <i className="bi bi-chevron-right ms-auto" />}
+          </button>
+        ))}
+      </nav>
 
         <div className="sidebar-footer">
           <button className="sidebar-utility w-100" onClick={handleLogout}>
