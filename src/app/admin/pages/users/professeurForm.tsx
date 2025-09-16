@@ -95,6 +95,7 @@ export default function ProfesseurForm({ roles, mode, docId, onClose, onSaved }:
     const r = roles.find((x) => x.libelle?.toLowerCase().trim() === "professeur");
     return r ? String(r.id) : "";
   }, [roles]);
+  const [showPwd, setShowPwd] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [loadingDoc, setLoadingDoc] = useState(mode === "edit");
@@ -750,21 +751,35 @@ export default function ProfesseurForm({ roles, mode, docId, onClose, onSaved }:
                       </div>
 
                       {mode === "create" && (
-                        <div className="col-md-4">
-                          <label className="form-label">
-                            Mot de passe <span className="text-danger">*</span>
-                          </label>
+                      <div className="col-md-4">
+                        <label className="form-label">
+                          Mot de passe <span className="text-danger">*</span>
+                        </label>
+
+                        <div className="input-group">
                           <input
-                            type="password"
+                            type={showPwd ? "text" : "password"}
                             className={`form-control ${errors.password ? "is-invalid" : ""}`}
                             value={form.password}
                             onChange={(e) => setField("password", e.target.value)}
                             placeholder="Min 6 caractères"
+                            autoComplete="new-password"
                           />
-                          {errors.password && <div className="invalid-feedback">{errors.password}</div>}
+                          <button
+                            type="button"
+                            className="btn btn-outline-secondary"
+                            onClick={() => setShowPwd(v => !v)}
+                            title={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                            aria-label={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                            aria-pressed={showPwd}
+                          >
+                            {showPwd ? <i className="bi bi-eye-slash" /> : <i className="bi bi-eye" />}
+                          </button>
                         </div>
-                      )}
 
+                        {errors.password && <div className="invalid-feedback d-block">{errors.password}</div>}
+                      </div>
+                    )}
                       <div className={mode === "create" ? "col-md-4" : "col-md-8"}>
                         <label className="form-label">
                           Spécialité <span className="text-danger">*</span>

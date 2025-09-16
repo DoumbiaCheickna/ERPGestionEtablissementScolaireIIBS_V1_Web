@@ -53,6 +53,10 @@ const normalizeLogin = (raw: string) => {
 const isLoginValidShape = (login: string) => /^[a-z][a-z0-9._-]{2,31}$/.test(login);
 const loginNorm = (login: string) => login.toLowerCase();
 
+// en haut du composant, avec les autres useState :
+const [showPwd, setShowPwd] = useState(false);
+
+
 /* Component */
 export default function AdminForm({
   roles,
@@ -363,17 +367,35 @@ export default function AdminForm({
           {renderErrors('login')}
         </div>
 
+        {/* --- remplace ce bloc --- */}
         <div className="col-md-6">
-          <label className="form-label">Mot de passe (temporaire)<span className="text-danger">*</span></label>
-          <input
-            type="password"
-            className={`form-control ${errors.password ? 'is-invalid' : ''}`}
-            value={adminForm.password}
-            onChange={(e) => setAdminForm(p => ({ ...p, password: e.target.value }))}
-            onBlur={validatePassword}
-            placeholder="Mot de passe initial"
-            autoComplete="new-password"
-          />
+          <label className="form-label">
+            Mot de passe (temporaire)<span className="text-danger">*</span>
+          </label>
+
+          <div className="input-group">
+            <input
+              type={showPwd ? 'text' : 'password'}
+              className={`form-control ${errors.password ? 'is-invalid' : ''}`}
+              value={adminForm.password}
+              onChange={(e) => setAdminForm(p => ({ ...p, password: e.target.value }))}
+              onBlur={validatePassword}
+              placeholder="Mot de passe initial"
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => setShowPwd(s => !s)}
+              title={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+              aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+              aria-pressed={showPwd}
+              tabIndex={0}
+            >
+              {showPwd ? <i className="bi bi-eye-slash" /> : <i className="bi bi-eye" />}
+            </button>
+          </div>
+
           {renderErrors('password')}
           <small className="text-muted d-block mt-1">
             Ce mot de passe sera demandé puis <strong>changé</strong> à la première connexion.

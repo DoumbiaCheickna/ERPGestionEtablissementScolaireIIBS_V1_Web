@@ -48,6 +48,13 @@ export default function PersonnelForm({
   const phoneRegexLocal = /^(70|75|76|77|78)\d{7}$/;
 
   const sanitize = (s: string) => String(s ?? "").replace(/<[^>]*>?/g, "").trim();
+  // ↓ juste après les autres useState existants
+  const [showPwd, setShowPwd] = useState(false);
+
+  // indicateurs pour la vérification live du login
+  const [checkingLogin, setCheckingLogin] = useState(false);
+  const [loginAvailable, setLoginAvailable] = useState<boolean | null>(null);
+
 
   // ─────────── form
   const [form, setForm] = useState({
@@ -187,23 +194,40 @@ export default function PersonnelForm({
 
   // Vérif login unique (onSubmit on re-check)
   useEffect(() => {
-    if (!form.login || !usernameRegex.test(form.login)) return;
+    // rien à vérifier si vide ou invalide
+    if (!form.login || !usernameRegex.test(form.login)) {
+      setLoginAvailable(null);
+      setCheckingLogin(false);
+      return;
+    }
+
+    setCheckingLogin(true);
     const t = setTimeout(async () => {
       try {
         const qy = query(collection(db, "users"), where("login", "==", form.login));
         const snap = await getDocs(qy);
+
+        let exists = false;
         if (!snap.empty) {
+          // en édition, autorise si c'est le même doc
           const same = mode === "edit" && snap.docs.every((d) => d.id === docId);
-          if (!same) setErrors((e) => ({ ...e, login: "Nom d’utilisateur déjà pris." }));
-        } else {
-          setErrors((e) => {
-            const c = { ...e };
-            delete c.login;
-            return c;
-          });
+          exists = !same;
         }
-      } catch {}
+
+        setLoginAvailable(!exists);
+        setErrors((e) => {
+          const c = { ...e };
+          if (exists) c.login = "Nom d’utilisateur déjà pris.";
+          else delete c.login;
+          return c;
+        });
+      } catch {
+        setLoginAvailable(null); // neutre en cas d'erreur réseau
+      } finally {
+        setCheckingLogin(false);
+      }
     }, 400);
+
     return () => clearTimeout(t);
   }, [form.login, mode, docId]);
 
@@ -545,33 +569,68 @@ export default function PersonnelForm({
                         <label className="form-label">
                           Nom d’utilisateur <span className="req">*</span>
                         </label>
-                        <input
-                          className={`form-control ${errors.login ? "is-invalid" : ""}`}
-                          value={form.login}
-                          onChange={(e) => setField("login", e.target.value)}
-                        />
-                        {errors.login && (
-                          <div className="invalid-feedback">{errors.login}</div>
+
+                        <div className="input-group">
+                          <input
+                            className={`form-control ${errors.login ? "is-invalid" : ""}`}
+                            value={form.login}
+                            onChange={(e) => setField("login", e.target.value)}
+                            placeholder="Unique, ex: j.doe"
+                            onBlur={(e) => setField("login", e.target.value.trim())}
+                          />
+                          <span className="input-group-text bg-white">
+                            {checkingLogin ? (
+                              <span className="spinner-border spinner-border-sm" />
+                            ) : loginAvailable === true ? (
+                              <i className="bi bi-check-circle text-success" />
+                            ) : loginAvailable === false ? (
+                              <i className="bi bi-x-circle text-danger" />
+                            ) : (
+                              <i className="bi bi-person" />
+                            )}
+                          </span>
+                        </div>
+
+                        {errors.login && <div className="invalid-feedback d-block">{errors.login}</div>}
+                        {!errors.login && form.login && loginAvailable === true && (
+                          <div className="form-text text-success">Nom d’utilisateur disponible</div>
                         )}
+                        {!errors.login && form.login && loginAvailable === false && (
+                          <div className="text-danger small">Ce nom d’utilisateur est déjà pris.</div>
+                        )}
+                        {checkingLogin && <div className="form-text">Vérification de la disponibilité…</div>}
                       </div>
 
                       {mode === "create" && (
-                        <div className="col-md-4">
-                          <label className="form-label">
-                            Mot de passe <span className="req">*</span>
-                          </label>
+                      <div className="col-md-4">
+                        <label className="form-label">
+                          Mot de passe <span className="req">*</span>
+                        </label>
+
+                        <div className="input-group">
                           <input
-                            type="password"
+                            type={showPwd ? "text" : "password"}
                             className={`form-control ${errors.password ? "is-invalid" : ""}`}
                             value={form.password}
                             onChange={(e) => setField("password", e.target.value)}
                             placeholder="Min 6 caractères"
+                            autoComplete="new-password"
                           />
-                          {errors.password && (
-                            <div className="invalid-feedback">{errors.password}</div>
-                          )}
+                          <button
+                            type="button"
+                            className="btn btn-outline-secondary"
+                            onClick={() => setShowPwd((v) => !v)}
+                            title={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                            aria-label={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                            aria-pressed={showPwd}
+                          >
+                            {showPwd ? <i className="bi bi-eye-slash" /> : <i className="bi bi-eye" />}
+                          </button>
                         </div>
-                      )}
+
+                        {errors.password && <div className="invalid-feedback d-block">{errors.password}</div>}
+                      </div>
+                    )}
                     </div>
 
                     {/* Infos personnelles */}

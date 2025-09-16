@@ -83,6 +83,7 @@ const initialState: DirectorFormState = {
   telephone: '',
   departements: [],
 };
+const [showPwd, setShowPwd] = useState(false);
 
 export default function DirectorForm({
   roles,
@@ -439,14 +440,29 @@ export default function DirectorForm({
           <label className="form-label">
             Mot de passe<span className="text-danger">*</span>
           </label>
-          <input
-            type="password"
-            className={`form-control ${errors.password ? 'is-invalid' : ''}`}
-            value={directorForm.password}
-            onChange={(e) => setField('password', e.target.value)}
-            placeholder="Mot de passe"
-          />
-          {errors.password && <div className="invalid-feedback">{errors.password}</div>}
+
+          <div className="input-group">
+            <input
+              type={showPwd ? 'text' : 'password'}
+              className={`form-control ${errors.password ? 'is-invalid' : ''}`}
+              value={directorForm.password}
+              onChange={(e) => setField('password', e.target.value)}
+              placeholder="Mot de passe"
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => setShowPwd(s => !s)}
+              title={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+              aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+              aria-pressed={showPwd}
+            >
+              {showPwd ? <i className="bi bi-eye-slash" /> : <i className="bi bi-eye" />}
+            </button>
+          </div>
+
+          {errors.password && <div className="invalid-feedback d-block">{errors.password}</div>}
         </div>
 
         {/* Téléphone (+221 + contraintes) */}

@@ -203,7 +203,7 @@ export default function StudentForm({
       return c;
     });
   };
-
+  const [showPwd, setShowPwd] = useState(false);
   // Appliquer le contexte classe (préremplissage + verrouillage)
   const lockedClassContext = Boolean(defaultNiveauId && defaultFiliereId && defaultClasse && defaultYearId);
   useEffect(() => {
@@ -647,18 +647,33 @@ export default function StudentForm({
         </div>
 
         <div className="col-md-4">
-          <label className="form-label">
-            Mot de passe<span className="text-danger">*</span>
-          </label>
+        <label className="form-label">
+          Mot de passe<span className="text-danger">*</span>
+        </label>
+
+        <div className="input-group">
           <input
-            type="password"
+            type={showPwd ? 'text' : 'password'}
             className={`form-control ${errors['password'] ? 'is-invalid' : ''}`}
             value={f.password}
             onChange={(e) => setField('password', e.target.value)}
             placeholder="Temporaire — sera changé au 1er login"
+            autoComplete="new-password"
           />
-          {errors['password'] && <div className="invalid-feedback">{errors['password']}</div>}
+          <button
+            type="button"
+            className="btn btn-outline-secondary"
+            onClick={() => setShowPwd(s => !s)}
+            title={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+            aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+            aria-pressed={showPwd}
+          >
+            {showPwd ? <i className="bi bi-eye-slash" /> : <i className="bi bi-eye" />}
+          </button>
         </div>
+
+        {errors['password'] && <div className="invalid-feedback d-block">{errors['password']}</div>}
+      </div>
 
         {/* ==== Infos perso ==== */}
         <div className="col-12 mt-3">

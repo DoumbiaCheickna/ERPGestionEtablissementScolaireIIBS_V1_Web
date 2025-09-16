@@ -216,6 +216,8 @@ const allowedFileTypes: Record<string, string[]> = {
 };
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 Mo
+const [showPwd, setShowPwd] = useState(false);
+
 
 export default function ResponsableFinancierForm({
   roles,
@@ -866,20 +868,29 @@ export default function ResponsableFinancierForm({
           <label className="form-label">
             Mot de passe<span className="text-danger">*</span>
           </label>
-          <input
-            type="password"
-            className={`form-control ${errors.password ? 'is-invalid' : ''}`}
-            value={responsableForm.password}
-            onChange={(e) => setField('password', e.target.value)}
-            placeholder="Défini temporairement — modifié à la 1ère connexion"
-          />
-          {errors.password && <div className="invalid-feedback">{errors.password}</div>}
-        </div>
 
-        {/* Informations personnelles */}
-        <div className="col-12 mt-3">
-          <h5 className="fw-bold">Informations personnelles</h5>
-          <hr />
+          <div className="input-group">
+            <input
+              type={showPwd ? 'text' : 'password'}
+              className={`form-control ${errors.password ? 'is-invalid' : ''}`}
+              value={responsableForm.password}
+              onChange={(e) => setField('password', e.target.value)}
+              placeholder="Défini temporairement — modifié à la 1ère connexion"
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => setShowPwd(v => !v)}
+              title={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+              aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+              aria-pressed={showPwd}
+            >
+              {showPwd ? <i className="bi bi-eye-slash" /> : <i className="bi bi-eye" />}
+            </button>
+          </div>
+
+          {errors.password && <div className="invalid-feedback d-block">{errors.password}</div>}
         </div>
 
         <div className="col-md-4">
