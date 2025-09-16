@@ -458,7 +458,6 @@ export default function EtudiantsPage() {
       loadDualChoices();
     },[dualOpen, classe.academic_year_id]);
 
-
     // Réinscription — charger classes selon l’année
     const loadClassesForYear = async (yearId: string) => {
       setReinscClasses([]);

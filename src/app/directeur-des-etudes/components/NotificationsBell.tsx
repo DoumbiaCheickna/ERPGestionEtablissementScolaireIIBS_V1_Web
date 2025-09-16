@@ -13,7 +13,7 @@ import { useAcademicYear } from "../context/AcademicYearContext";
 type TSemestre = "S1"|"S2"|"S3"|"S4"|"S5"|"S6";
 type NotificationDoc = {
   id?: string;
-  type: "birthday" | "absence_alert";
+  type: "birthday" | "absence_alert" | "prof_emargement";
   title: string;
   body?: string;
   created_at: any; // Firestore Timestamp ou Date
@@ -351,7 +351,9 @@ export default function NotificationsBell() {
                 <div key={n.id} className={`px-3 py-2 notif-item ${n.read ? "is-read": ""}`}>
                   <div className="d-flex align-items-start gap-2">
                     <div className="pt-1">
-                      {n.type === "birthday" ? <i className="bi bi-gift" /> : <i className="bi bi-flag" />}
+                      {n.type === "birthday" ? <i className="bi bi-gift" /> :
+                      n.type === "absence_alert" ? <i className="bi bi-flag" /> :
+                      <i className="bi bi-journal-check" /> /* prof_emargement */}
                     </div>
                     <div className="flex-grow-1">
                       <div className="fw-semibold">{n.title}</div>

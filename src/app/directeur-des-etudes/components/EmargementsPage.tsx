@@ -10,6 +10,7 @@ import {
   addDoc,
   doc,
   getDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
 import { useAcademicYear } from "../context/AcademicYearContext";
@@ -658,8 +659,36 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
   const [stuLoading, setStuLoading] = useState(false);
 
   // absents de la séance sélectionnée
-  const [absents, setAbsents] = useState<Array<{matricule:string; nom:string; email?:string; telephone?:string; entries:AbsenceEntry[];}>>([]);
+  type TJustif = {
+    contenu?: string;
+    documents?: string[];
+    statut?: "En attente" | "Approuvée" | "Rejetée";
+    dateJustification?: any;
+    validated_at?: any;
+    validated_by?: string;
+  };
+
+  type TAbsentRow = {
+    matricule: string;
+    nom: string;
+    email?: string;
+    telephone?: string;
+    entries: AbsenceEntry[];
+    justif?: TJustif | null;
+  };
+
+  const [absents, setAbsents] = useState<Array<{
+    matricule: string;
+    nom: string;
+    email?: string;
+    telephone?: string;
+    entries: AbsenceEntry[];
+    justif?: TJustif | null;
+  }>>([]);
   const [exportBusy, setExportBusy] = useState(false);
+  const [emargDocId, setEmargDocId] = useState<string|null>(null);
+  const [actionBusy, setActionBusy] = useState<string|null>(null); // matricule en cours d’action
+
 
   // métadonnées / règles de calendrier
   const [yearMeta, setYearMeta] = useState<{start?:Date; end?:Date}>({});
@@ -681,6 +710,12 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
     const d = fromISODate(dateStr);
     return dayOfWeekLundi1(d); // 1..7
   }, [dateStr]);
+
+  const [toastMsg2, setToastMsg2] = useState("");
+  const [okShow2, setOkShow2] = useState(false);
+  const [errShow2, setErrShow2] = useState(false);
+  const ok2 = (m: string) => { setToastMsg2(m); setOkShow2(true); };
+  const ko2 = (m: string) => { setToastMsg2(m); setErrShow2(true); };
 
   /* ====== Charger matières + EDT ====== */
   useEffect(() => {
@@ -987,23 +1022,27 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
         if (snap.empty) { cacheSet(slotKey, []); setAbsents([]); return; }
 
         const doc0 = snap.docs[0];
+        setEmargDocId(doc0.id);
         const data = doc0.data() as SeanceDoc & Record<string, any>;
+        setEmargDocId(doc0.id);
+        const justifsMap = ((data as any).justifs as Record<string, TJustif> | undefined) || {};
 
-        const rows: Array<{matricule:string; nom:string; email?:string; telephone?:string; entries:AbsenceEntry[]}> = [];
+        const rows: TAbsentRow[] = [];
         for (const k of Object.keys(data)) {
-          const val = (data as any)[k];
-          if (Array.isArray(val)) {
-            const entries = val as AbsenceEntry[];
-            const stu = students.find((s) => (s.matricule || "") === k);
-            rows.push({
-              matricule: k,
-              nom: stu ? `${stu.nom} ${stu.prenom}` : (entries[0]?.nom_complet || "—"),
-              email: stu?.email || "",
-              telephone: stu?.telephone || "",
-              entries,
-            });
-          }
+        const val = (data as any)[k];
+        if (Array.isArray(val)) {
+          const entries = val as AbsenceEntry[];
+          const stu = students.find((s) => (s.matricule || "") === k);
+          rows.push({
+            matricule: k,
+            nom: stu ? `${stu.nom} ${stu.prenom}` : (entries[0]?.nom_complet || "—"),
+            email: stu?.email || "",
+            telephone: stu?.telephone || "",
+            entries,
+            justif: justifsMap[k] || null, // ✅ maintenant OK
+          });
         }
+      }
         rows.sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
 
         cacheSet(slotKey, rows); // 👈
@@ -1108,6 +1147,69 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
       setMkBusy(false);
     }
   };
+
+  // Notification pour l'étudiant
+  async function notifyStudentJustif(matricule: string, ok: boolean, slot?: { dateISO: string; start: string; end: string; matiere: string; class_id: string; }) {
+    try {
+      const snap = await getDocs(query(collection(db, "users"), where("matricule", "==", matricule)));
+      if (snap.empty) return;
+      const u = snap.docs[0];
+      const userId = u.id;
+      const title = ok ? "✅ Justification validée" : "❌ Justification rejetée";
+      const body = slot
+        ? `${slot.dateISO} • ${slot.matiere} (${slot.start}–${slot.end})`
+        : undefined;
+
+      await addDoc(collection(db, "notifications"), {
+        type: "justification",
+        title,
+        body,
+        created_at: new Date(),
+        read: false,
+        audience_role: "etudiant",
+        dedup_key: `justif::${matricule}::${slot?.dateISO || ""}::${slot?.start || ""}-${slot?.end || ""}::${ok?"ok":"ko"}`,
+        meta: { user_id: userId, matricule, class_id: slot?.class_id },
+      });
+    } catch (e) { console.error("notifyStudentJustif", e); }
+  }
+
+  // Valider / Rejeter
+  async function approveJustif(matricule: string, approved: boolean) {
+    if (!emargDocId) return;
+    setActionBusy(matricule);
+    try {
+      const st = selectedIndex !== null ? sessionsWithStatus[selectedIndex] : null;
+      const slot = st?.slot;
+      const dateISO = toISODate(fromISODate(dateStr));
+
+      await updateDoc(doc(db, "emargements", emargDocId), {
+        [`justifs.${matricule}.statut`]: approved ? "Approuvée" : "Rejetée",
+        [`justifs.${matricule}.validated_at`]: new Date(),
+        // [`justifs.${matricule}.validated_by`]: "<id-ou-nom-directeur>",
+      });
+
+      setAbsents(prev => prev.map(r =>
+        r.matricule === matricule
+          ? { ...r, justif: { ...(r.justif || {}), statut: approved ? "Approuvée" : "Rejetée", validated_at: new Date() } }
+          : r
+      ));
+
+      await notifyStudentJustif(matricule, approved, slot ? {
+        dateISO,
+        start: slot.start,
+        end: slot.end,
+        matiere: (matieres[slot.matiere_id]?.libelle || slot.matiere_libelle || ""),
+        class_id: classe.id,
+      } : undefined);
+
+      ok2(approved ? "Justification validée." : "Justification rejetée.");
+    } catch (e) {
+      console.error(e);
+      ko2("Échec de la mise à jour.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
 
   return (
     <>
@@ -1215,25 +1317,88 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
               <div className="table-responsive">
                 <table className="table align-middle">
                   <thead className="table-light">
-                    <tr>
-                      <th>#</th>
-                      <th>Matricule</th>
-                      <th>Nom & Prénom</th>
-                      <th>Email</th>
-                      <th>Téléphone</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {absents.map((a, i) => (
+                  <tr>
+                    <th>#</th>
+                    <th>Matricule</th>
+                    <th>Nom & Prénom</th>
+                    <th>Email</th>
+                    <th>Téléphone</th>
+                    <th>Justification</th>   {/* 👈 new */}
+                    <th style={{width:220}}>Actions</th> {/* 👈 new */}
+                  </tr>
+                </thead>
+                <tbody>
+                  {absents.map((a, i) => {
+                    const j = a.justif;
+                    const statut =
+                      j?.statut || (j?.contenu || (j?.documents?.length ?? 0) > 0 ? "En attente" : "—");
+
+                    const canValidate = !!j && statut !== "Approuvée";
+                    const canReject = !!j && statut !== "Rejetée";
+
+                    return (
                       <tr key={a.matricule}>
                         <td className="text-muted">{i+1}</td>
                         <td className="text-muted">{a.matricule}</td>
                         <td className="fw-semibold">{a.nom}</td>
                         <td className="text-muted">{a.email || "—"}</td>
                         <td className="text-muted">{a.telephone ? `+221 ${a.telephone}` : "—"}</td>
+
+                        {/* Justification */}
+                        <td>
+                          {statut === "—" ? (
+                            <span className="text-muted">Aucun</span>
+                          ) : (
+                            <div className="d-flex flex-column gap-1">
+                              <span className={
+                                  "badge " +
+                                  (statut === "Approuvée"
+                                    ? "bg-success-subtle text-success"
+                                    : statut === "Rejetée"
+                                    ? "bg-danger-subtle text-danger"
+                                    : "bg-warning-subtle text-warning")
+                                }>
+                                {statut}
+                              </span>
+                              {j?.contenu && (
+                                <div className="small text-muted" style={{maxWidth:280, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                                  {j.contenu}
+                                </div>
+                              )}
+                              {j?.documents?.length ? (
+                                <div className="small">
+                                  {j.documents.map((url, idx) => (
+                                    <a key={idx} href={url} target="_blank" rel="noreferrer" className="me-2">Doc {idx+1}</a>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="d-flex gap-2">
+                          <button
+                            className="btn btn-sm btn-outline-success"
+                            disabled={!canValidate || !emargDocId || actionBusy === a.matricule}
+                            onClick={() => approveJustif(a.matricule, /*approved=*/true)}
+                            title="Valider la justification"
+                          >
+                            {actionBusy === a.matricule ? <span className="spinner-border spinner-border-sm" /> : "Valider"}
+                          </button>
+                          <button
+                            className="btn btn-sm btn-outline-danger"
+                            disabled={!canReject || !emargDocId || actionBusy === a.matricule}
+                            onClick={() => approveJustif(a.matricule, /*approved=*/false)}
+                            title="Rejeter la justification"
+                          >
+                            Rejeter
+                          </button>
+                        </td>
                       </tr>
-                    ))}
-                  </tbody>
+                    );
+                  })}
+                </tbody>
                 </table>
               </div>
             )}

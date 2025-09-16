@@ -6,6 +6,7 @@ import {
   collection, getDocs, query, where, orderBy, DocumentData
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
+import { notifyDirecteurProfEmargement } from "@/lib/notifications";
 
 const useJsPDF = () => {
   const ref = React.useRef<{ jsPDF: any; autoTable: (doc: any, opts: any) => any } | null>(null);
