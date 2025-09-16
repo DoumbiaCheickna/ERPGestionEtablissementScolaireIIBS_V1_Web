@@ -120,6 +120,35 @@ type TUserRow = {
   role_key?: string;
 };
 
+
+// ➕ ajoute
+type TEdtSlot = {
+  day: number;           // 1..7
+  start: string;         // "08:00"
+  end: string;           // "10:00"
+  matiere_id?: string;
+  matiere_libelle?: string;
+  enseignant?: string;
+  salle?: string;
+};
+type TEdtDoc = {
+  annee: string;
+  class_id: string;
+  class_libelle: string;
+  slots: TEdtSlot[];
+};
+
+// ➕ pour l'affichage
+type TSchedRow = {
+  day: number;
+  class_id: string;
+  class_libelle: string;
+  matiere_libelle: string;
+  start: string;
+  end: string;
+  salle?: string;
+};
+
 /* ------------------------------------------------------------------ */
 // ✅ Types locaux pour caster le composant externe ProfesseurForm
 type ProfesseurFormMode = "create" | "edit";
@@ -264,6 +293,10 @@ export default function ProfessorsPage() {
   const [assignOk, setAssignOk] = useState("");
 
   const [anneeId, setAnneeId] = useState<string>("");
+  // ➕ ajoute ces états
+  const [edtLoading, setEdtLoading] = useState(false);
+  const [edtRows, setEdtRows] = useState<TSchedRow[]>([]);
+
 
   // building block sélection
   const [draft, setDraft] = useState<TDraft>({ matieres_ids: [] });
@@ -689,6 +722,97 @@ export default function ProfessorsPage() {
 
   /* ---------------------- Assignation ------------------------------- */
 
+    // ➕ nom complet du prof à partir de la liste 'all' (déjà chargée)
+  const getProfFullName = (pid: string) => {
+    const p = all.find(u => u.docId === pid);
+    return p ? `${p.prenom} ${p.nom}` : "";
+  };
+
+  // ➕ petits helpers
+  const dayLabel = (d: number) =>
+    ["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"][d % 7];
+
+  // Firestore 'in' max 10
+  const chunk = <T,>(arr: T[], size = 10) =>
+    Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i*size, (i+1)*size));
+
+  const timeToMinutes = (hhmm: string) => {
+    const [h, m] = (hhmm || "0:0").split(":").map(Number);
+    return (h||0)*60 + (m||0);
+  };
+
+  // ➕ ajoute cette fonction
+  const loadProfessorSchedule = async (year: string, profId: string) => {
+    setEdtLoading(true);
+    setEdtRows([]);
+    try {
+      // 1) Récupère les affectations de l’année
+      const affRef = doc(db, "affectations_professeurs", `${year}__${profId}`);
+      const affSnap = await getDoc(affRef);
+      if (!affSnap.exists()) { setEdtLoading(false); return; }
+      const aff = affSnap.data() as any;
+      const classes: any[] = Array.isArray(aff.classes) ? aff.classes : [];
+
+      // Map classe -> set de matières affectées (pour filtrer)
+      const allowedByClass = new Map<string, Set<string>>();
+      const classIds: string[] = [];
+      classes.forEach((c) => {
+        const cid = String(c.classe_id || "");
+        if (!cid) return;
+        classIds.push(cid);
+        const mids = new Set<string>((c.matieres_ids || []).map((x: any) => String(x)));
+        allowedByClass.set(cid, mids);
+      });
+      if (classIds.length === 0) { setEdtLoading(false); return; }
+
+      const fullName = getProfFullName(profId).trim();
+
+      // 2) Récupère les documents EDT des classes (par chunks de 10)
+      const rows: TSchedRow[] = [];
+      for (const ids of chunk(classIds, 10)) {
+        const qref = query(
+          collection(db, "edts"),
+          where("annee", "==", year),
+          where("class_id", "in", ids)
+        );
+        const snap = await getDocs(qref);
+        snap.forEach((d) => {
+          const v = d.data() as TEdtDoc;
+          const cid = v.class_id;
+          const clabel = v.class_libelle;
+          const allowed = allowedByClass.get(cid) || new Set<string>();
+          (v.slots || []).forEach((s) => {
+            // On garde le slot si :
+            //  - l’enseignant est bien ce prof (prioritaire)
+            //  - sinon, si la matière du slot fait partie des matières affectées à ce prof dans cette classe
+            const isHisByName = fullName && s.enseignant && s.enseignant.trim() === fullName;
+            const isHisByMat  = s.matiere_id && allowed.has(s.matiere_id);
+            if (isHisByName || isHisByMat) {
+              rows.push({
+                day: Number(s.day ?? 0),
+                class_id: cid,
+                class_libelle: clabel,
+                matiere_libelle: s.matiere_libelle || "",
+                start: s.start || "",
+                end: s.end || "",
+                salle: s.salle || "",
+              });
+            }
+          });
+        });
+      }
+
+      // 3) Tri : jour puis heure
+      rows.sort((a,b) => (a.day - b.day) || (timeToMinutes(a.start) - timeToMinutes(b.start)));
+      setEdtRows(rows);
+    } catch (e) {
+      console.error(e);
+      setEdtRows([]);
+    } finally {
+      setEdtLoading(false);
+    }
+  };
+
   // charge les affectations pour une année donnée
   const loadAssignFor = async (year: string, profId: string) => {
     setDraft({ matieres_ids: [] });
@@ -737,7 +861,9 @@ export default function ProfessorsPage() {
 
     const startYear = selectedYearId || activeAnneeId;
     setAnneeId(startYear);
+
     await loadAssignFor(startYear, docId);
+    await loadProfessorSchedule(startYear, docId);   // ➕ AJOUT
 
     setShowAssign(true);
   };
@@ -1197,7 +1323,6 @@ export default function ProfessorsPage() {
                   </h5>
                   <button type="button" className="btn-close" onClick={() => setShowDetails(false)} />
                 </div>
-
                 <div className="modal-body">
                   {detailsLoading ? (
                     <div className="text-center py-4">
@@ -1469,6 +1594,7 @@ export default function ProfessorsPage() {
                           setAnneeId(y);
                           if (assignForDocId) {
                             await loadAssignFor(y, assignForDocId);
+                            await loadProfessorSchedule(y, assignForDocId);
                           }
                           setEditingClasseId(null);
                           setDraft({ matieres_ids: [] });
@@ -1706,6 +1832,46 @@ export default function ProfessorsPage() {
                               </tr>
                             );
                           })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* ------- Emploi du temps du professeur ------- */}
+                  <hr className="my-3" />
+                  <h6 className="fw-semibold">
+                    Emploi du temps du professeur — {annees.find(a => a.id === anneeId)?.libelle || ""}
+                  </h6>
+
+                  {edtLoading ? (
+                    <div className="text-muted">
+                      <span className="spinner-border spinner-border-sm me-2" />
+                      Chargement de l’emploi du temps…
+                    </div>
+                  ) : edtRows.length === 0 ? (
+                    <div className="text-muted">Aucun créneau trouvé pour ce professeur sur cette année.</div>
+                  ) : (
+                    <div className="table-responsive mt-2">
+                      <table className="table table-sm align-middle">
+                        <thead className="table-light">
+                          <tr>
+                            <th>Jour</th>
+                            <th>Classe</th>
+                            <th>Matière</th>
+                            <th>Salle</th>
+                            <th>Créneau</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {edtRows.map((r, i) => (
+                            <tr key={i}>
+                              <td>{dayLabel(r.day)}</td>
+                              <td>{r.class_libelle}</td>
+                              <td>{r.matiere_libelle || <span className="text-muted">—</span>}</td>
+                              <td>{r.salle || <span className="text-muted">—</span>}</td>
+                              <td>{r.start} – {r.end}</td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
