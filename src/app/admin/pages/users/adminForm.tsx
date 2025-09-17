@@ -53,10 +53,6 @@ const normalizeLogin = (raw: string) => {
 const isLoginValidShape = (login: string) => /^[a-z][a-z0-9._-]{2,31}$/.test(login);
 const loginNorm = (login: string) => login.toLowerCase();
 
-// en haut du composant, avec les autres useState :
-const [showPwd, setShowPwd] = useState(false);
-
-
 /* Component */
 export default function AdminForm({
   roles,
@@ -72,6 +68,9 @@ export default function AdminForm({
       return l === 'administrateur' || l === 'admin';
     }) || null;
   }, [roles]);
+
+  // en haut du composant, avec les autres useState :
+  const [showPwd, setShowPwd] = useState(false);
 
   const [adminForm, setAdminForm] = useState({
     email: '',

@@ -216,8 +216,6 @@ const allowedFileTypes: Record<string, string[]> = {
 };
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 Mo
-const [showPwd, setShowPwd] = useState(false);
-
 
 export default function ResponsableFinancierForm({
   roles,
@@ -233,7 +231,7 @@ export default function ResponsableFinancierForm({
   // État pour la vérif d'unicité en temps réel
   const [checkingLogin, setCheckingLogin] = useState(false);
   const [loginAvailable, setLoginAvailable] = useState<boolean | null>(null);
-
+  const [showPwd, setShowPwd] = useState(false);
   // Détection du rôle "Responsable Financier" (préremplissage du select)
   const normalize = (s: string) =>
     s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');

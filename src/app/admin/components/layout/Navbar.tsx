@@ -2,7 +2,7 @@
 'use client';
 
 import Image from 'next/image';
-import Logo from '../../assets/iibs_logo.png';
+import Logo from '../../assets/iibs-new.png';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 
@@ -396,7 +396,14 @@ export default function RenderNav() {
           className="navbar-brand btn btn-link p-0 text-decoration-none"
           onClick={() => gotoTab('roles')}
         >
-          <Image src={Logo} alt="IIBS Logo" width={100} height={50} className="img-fluid" />
+          <Image
+            src={Logo}
+            alt="IIBS Logo"
+            width={80}
+            height={50}
+            style={{ height: 40, width: 'auto' }} // garde les proportions
+            priority
+          />
         </button>
 
         <button

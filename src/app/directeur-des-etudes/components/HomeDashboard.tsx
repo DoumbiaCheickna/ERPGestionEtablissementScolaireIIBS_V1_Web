@@ -471,7 +471,7 @@ export default function HomeDashboard({
                       style={{
                         height: h,
                         width: '18%',
-                        background: '#0D6EFD',
+                        background: '#0b5ed7',
                         borderRadius: 6,
                         opacity: r.v ? 1 : .25,
                         boxShadow: '0 2px 8px rgba(13,110,253,.25)',
@@ -697,10 +697,10 @@ export default function HomeDashboard({
           background: #f7f9fc;
         }
         .mini-cal-cell.btn { cursor: pointer; }
-        .mini-cal-cell.sel { outline: 2px solid #0D6EFD; }
+        .mini-cal-cell.sel { outline: 2px solid #0b5ed7; }
         .mini-cal-cell .dot {
           width: 6px; height: 6px; border-radius: 50%;
-          background: #0D6EFD; position: absolute; bottom: 4px;
+          background: #0b5ed7; position: absolute; bottom: 4px;
         }
       `}</style>
     </div>

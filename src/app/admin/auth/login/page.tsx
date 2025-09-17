@@ -21,9 +21,11 @@ import {
 } from 'firebase/auth';
 
 import { db, auth } from '../../../../../firebaseConfig';
-import Logo from '../../assets/iibs_logo.png';
+import Logo from '../../../../../public/iibs.jpg';
 import Toast from '../../components/ui/Toast';
 import { routeForRole, isPathAllowedForRole } from '@/lib/roleRouting';
+import { useSearchParams } from 'next/navigation';
+
 
 /* Helpers */
 const EMAIL_REGEX = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
@@ -58,8 +60,19 @@ export default function Login() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [showError, setShowError] = useState(false);
 
+  const params = useSearchParams();
+  const next = params.get('next');
+  const changed = params.get('changed');
+
   const showSuccessToast = (msg: string) => { setToastMessage(msg); setShowSuccess(true); };
   const showErrorToast   = (msg: string) => { setToastMessage(msg); setShowError(true); };
+
+  React.useEffect(() => {
+    if (changed === '1') {
+      setToastMessage('Mot de passe mis à jour. Veuillez vous reconnecter.');
+      setShowSuccess(true);
+    }
+  }, [changed]);
 
   const resolveEmail = async (id: string): Promise<{ email: string; userDocId?: string }> => {
     const raw = sanitize(id);
@@ -123,6 +136,10 @@ export default function Login() {
       // Stockage local (utile ailleurs)
       localStorage.setItem('userLogin', userData?.login || sanitize(identifier));
       if (roleLabelFromUser) localStorage.setItem('userRole', roleLabelFromUser);
+      if (next && next.startsWith('/')) {
+        router.replace(next);
+        return;
+      }
 
       // ---------- Redirection (NOUVEAU) ----------
       if (firstLogin) {
@@ -255,81 +272,113 @@ export default function Login() {
   };
 
   return (
-    <div className="min-vh-100 d-flex align-items-center justify-content-center" style={{ background: '#f8f9fb' }}>
-      <div className="container" style={{ maxWidth: 460 }}>
-        <div className="card shadow-sm border-0">
-          <div className="card-body p-4">
-            <div className="text-center mb-3">
+      <div className="container-fluid p-0 bg-page">
+      <div className="row g-0 min-vh-100">
+        {/* Colonne gauche : image dans une card bleue 029DFE */}
+        <div className="col-lg-6 d-none d-lg-flex align-items-stretch pe-3 py-3 order-lg-2">
+          <div
+            className="card border-0 rounded-4 overflow-hidden shadow-sm ms-auto me-0"
+            style={{ background: '#029DFE', width: 550, maxWidth: 550, flex: '0 0 auto' }} 
+          >
+            <div className="position-relative w-100 h-100 p-4 p-xl-5">
               <Image
-                src={Logo}
-                alt="IBS Logo"
-                className="img-fluid d-block mx-auto"
-                style={{ maxWidth: 160, height: 'auto' }}
+                src="/tool.png"
+                alt="Illustration"
+                fill
                 priority
+                style={{ objectFit: 'contain', objectPosition: 'center' }}
               />
             </div>
-
-            <h5 className="text-center fw-semibold mb-3">Connexion</h5>
-
-            <form onSubmit={handleLogin} className="mb-2">
-              <div className="mb-2">
-                <label htmlFor="identifier" className="form-label small fw-semibold mb-1">
-                  Email ou nom d’utilisateur
-                </label>
-                <input
-                  type="text"
-                  id="identifier"
-                  className="form-control rounded-3 py-2"
-                  placeholder="ex: jean@exemple.com ou j.dupont"
-                  value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value)}
-                  required
-                  disabled={loading}
-                  autoComplete="username"
+          </div>
+        </div>
+        {/* Colonne droite : card plein hauteur, bleu très clair */}
+        <div className="col-12 col-lg-6 d-flex min-vh-100 py-3 ps-3 order-lg-1">
+          <div className="card border-0 w-100 h-100 d-flex bg-transparent shadow-none">
+            <div
+              className="card-body d-flex flex-column align-items-center justify-content-center p-3 p-md-4"
+              style={{ background: '#eef6ff' }}
+            >
+              {/* Logo */}
+              <div className="text-center mb-4">
+                <Image
+                  src="/iibs-new.png"
+                  alt="IBS Logo"
+                  priority
+                  width={360}            // ← augmente la taille (ex: 320–420)
+                  height={120}           // hauteur approximative; l'image restera proportionnelle
+                  style={{
+                    width: 'clamp(220px, 35vw, 360px)',  // ← responsive : mini 220, maxi 360
+                    height: 'auto',
+                    objectFit: 'contain'
+                  }}
                 />
               </div>
 
-              <div className="mb-2">
-                <label htmlFor="password" className="form-label small fw-semibold mb-1">
-                  Mot de passe
-                </label>
-                <input
-                  type="password"
-                  id="password"
-                  className="form-control rounded-3 py-2"
-                  placeholder="Votre mot de passe"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
+              <h3 className="text-center fw-semibold mb-4 mb-lg-5">Connexion</h3>
+
+              {/* Formulaire */}
+              <form onSubmit={handleLogin} className="w-100" style={{ maxWidth: 420 }}>
+                <div className="mb-2">
+                  <label htmlFor="identifier" className="form-label small fw-semibold mb-1">
+                    Email ou nom d’utilisateur
+                  </label>
+                  <input
+                    type="text"
+                    id="identifier"
+                    className="form-control rounded-3 py-2"
+                    placeholder="ex: jean@exemple.com ou j.dupont"
+                    value={identifier}
+                    onChange={(e) => setIdentifier(e.target.value)}
+                    required
+                    disabled={loading}
+                    autoComplete="username"
+                  />
+                </div>
+
+                <div className="mb-2">
+                  <label htmlFor="password" className="form-label small fw-semibold mb-1">
+                    Mot de passe
+                  </label>
+                  <input
+                    type="password"
+                    id="password"
+                    className="form-control rounded-3 py-2"
+                    placeholder="Votre mot de passe"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    disabled={loading}
+                    autoComplete="current-password"
+                  />
+                </div>
+
+                {/* Bouton : prends la largeur, tu peux adapter la couleur ici */}
+                <button
+                  className="btn w-100 fw-semibold mt-2 py-2 rounded-3"
+                  type="submit"
                   disabled={loading}
-                  autoComplete="current-password"
-                />
-              </div>
-
-              <button
-                className="btn btn-dark w-100 fw-semibold mt-2 py-2 rounded-3"
-                type="submit"
-                disabled={loading}
-              >
-                {loading ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                    Connexion...
-                  </>
-                ) : (
-                  'Se connecter'
-                )}
-              </button>
-
-              <div className="text-center mt-2">
-                <button type="button" className="btn btn-link p-0 small" onClick={openForgot}>
-                  Mot de passe oublié ?
+                  style={{ backgroundColor: '#029DFE', borderColor: '#0d6efd', color: '#fff' }}
+                >
+                  {loading ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+                      Connexion...
+                    </>
+                  ) : (
+                    'Je me connecte'
+                  )}
                 </button>
-              </div>
-            </form>
 
-            <Toast message={toastMessage} type="success" show={showSuccess} onClose={() => setShowSuccess(false)} />
-            <Toast message={toastMessage} type="error" show={showError} onClose={() => setShowError(false)} />
+                <div className="text-center mt-2">
+                  <button type="button" className="btn btn-link p-0 small" onClick={() => setShowForgotModal(true)}>
+                    Mot de passe oublié ?
+                  </button>
+                </div>
+              </form>
+
+              <Toast message={toastMessage} type="success" show={showSuccess} onClose={() => setShowSuccess(false)} />
+              <Toast message={toastMessage} type="error"   show={showError}   onClose={() => setShowError(false)} />
+            </div>
           </div>
         </div>
       </div>
@@ -405,6 +454,13 @@ export default function Login() {
           <div className="modal-backdrop fade show" onClick={closeCheckEmail} />
         </>
       )}
+      <style jsx>{`
+      .bg-page { background: #eef6ff; }
+
+      
+      @media (min-width: 1400px) {
+      }
+    `}</style>
     </div>
   );
 }

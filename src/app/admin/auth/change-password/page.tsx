@@ -13,15 +13,21 @@ import {
   updateDoc,
   getDoc,
 } from 'firebase/firestore';
-import { updatePassword } from 'firebase/auth';
 import { db, auth } from '../../../../../firebaseConfig';
-import Logo from '../../assets/iibs_logo.png';
+import Logo from '../../assets/iibs-new.png';
 import Toast from '../../components/ui/Toast';
 import { routeForRole } from '@/lib/roleRouting';
+import { updatePassword, signOut } from 'firebase/auth';
 
 /** Anti-injection basique : retire caractères de contrôle + chevrons */
 const sanitizePassword = (v: string) =>
   v.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').replace(/[<>]/g, '');
+
+const goLoginForReauth = async (router: any) => {
+  try { await signOut(auth); } catch {}
+  router.replace('/admin/auth/login');
+};
+
 
 export default function ChangePassword() {
   const router = useRouter();
@@ -140,44 +146,43 @@ export default function ChangePassword() {
 
       // ⚠️ En prod: éviter de stocker un mdp en clair. (TODO: supprimer ce champ côté Firestore)
       await updateDoc(userDocRef, {
-        password: safePwd,
+        //password: safePwd,
         first_login: 0,
       });
 
-      // Mettre à jour dans Firebase Auth (si connecté)
-      if (auth.currentUser) {
-        try {
-          await updatePassword(auth.currentUser, safePwd);
-        } catch (err: any) {
-          console.error('Erreur updatePassword:', err);
-          if (err?.code === 'auth/requires-recent-login') {
-            showErrorToast('Veuillez vous reconnecter pour changer le mot de passe.');
-            router.replace('/admin/auth/login');
-            return;
-          }
-        }
+      // Mettre à jour dans Firebase Auth
+      const u = auth.currentUser;
+      if (!u || !u.email) {
+        showErrorToast('Utilisateur non connecté.');
+        await goLoginForReauth(router);
+        return;
       }
+
+      // Vérifier que le compte possède le provider "password"
+      const hasPasswordProvider = u.providerData.some(p => p.providerId === 'password');
+      if (!hasPasswordProvider) {
+        showErrorToast("Ce compte n'utilise pas un mot de passe. Veuillez vous reconnecter.");
+        await goLoginForReauth(router);
+        return;
+      }
+
+      try {
+          await updatePassword(u, safePwd);
+        } catch (err: any) {
+          console.error('updatePassword error:', err);
+          if (err?.code === 'auth/requires-recent-login') {
+            showErrorToast('Session expirée. Veuillez vous reconnecter.');
+          } else {
+            showErrorToast("Impossible de changer le mot de passe pour le moment.");
+          }
+          await goLoginForReauth(router);
+          return;
+        }
 
       showSuccessToast('Mot de passe changé avec succès !');
 
-      // Rôle & redirection
-      const roleLabel =
-        userData.role_libelle ||
-        (await (async () => {
-          try {
-            const roleSnap = await getDoc(doc(db, 'roles', String(userData.role_id)));
-            return roleSnap.data()?.libelle || '';
-          } catch {
-            return '';
-          }
-        })());
-
-      localStorage.removeItem('userLogin');
-      localStorage.setItem('userRole', roleLabel || '');
-
-      setTimeout(() => {
-        router.replace(routeForRole(roleLabel));
-      }, 700);
+      try { await signOut(auth); } catch {}
+        router.replace('/admin/auth/login?changed=1');
     } catch (error) {
       console.error(error);
       showErrorToast('Erreur serveur, veuillez réessayer plus tard.');
@@ -197,17 +202,22 @@ export default function ChangePassword() {
 
   return (
     <div className="min-vh-100 d-flex align-items-center justify-content-center p-3">
-      <div className="container" style={{ maxWidth: 540 }}>
+      <div className="container" style={{ maxWidth: 760 }}>
         <div className="row justify-content-center">
           <div className="col-12">
-            <Image
-              src={Logo}
-              alt="IBS Logo"
-              className="img-fluid d-block mx-auto mb-3"
-              style={{ maxWidth: '170px', height: 'auto' }}
-              priority
-            />
-
+             <div className="card border-0 shadow-sm overflow-hidden" style={{ background:'#eef6ff', borderRadius:'20px' }}>
+              <div
+                className="card-body p-4 p-md-5"
+                style={{ background: '#eef6ff' }}
+              >
+                {/* Logo */}
+                <Image
+                  src={Logo}
+                  alt="IBS Logo"
+                  className="d-block mx-auto mb-4"
+                  style={{ width: '220px', height: 'auto' }}  // ↑ un peu plus grand
+                  priority
+                />
             <div className="mb-2 text-center">
               <h5 className="fw-semibold mb-1">Changer votre mot de passe</h5>
               <p className="text-muted small mb-0">
@@ -312,10 +322,9 @@ export default function ChangePassword() {
 
               <div className="d-grid mt-3">
                 <button
-                  className="btn btn-dark fw-semibold py-2"
-                  style={{ borderRadius: '10px', color: 'white' }}
+                  className="btn fw-semibold py-2"
+                  style={{ backgroundColor: '#0b5ed7', borderColor: '#0b5ed7', borderRadius: '10px', color: 'white' }}
                   type="submit"
-                  // Bouton désactivé si le mot de passe n’est pas robuste
                   disabled={!isPasswordValid}
                   title={!isPasswordValid ? 'Le mot de passe doit respecter les critères' : 'Changer le mot de passe'}
                 >
@@ -337,6 +346,8 @@ export default function ChangePassword() {
               show={showError}
               onClose={() => setShowError(false)}
             />
+          </div>
+          </div>
           </div>
         </div>
       </div>

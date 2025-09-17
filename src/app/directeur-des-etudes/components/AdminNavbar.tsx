@@ -1031,7 +1031,7 @@ const fileRef = React.useRef<HTMLInputElement | null>(null);
           left: 12px;
           bottom: 12px;
           width: 230px;
-          background: linear-gradient(180deg, #0d6efd 0%, #0b5ed7 100%);
+          background: linear-gradient(180deg, #3274E0 0%, #0b5ed7 100%);
           color: #fff;
           display: flex;
           flex-direction: column;
@@ -1089,7 +1089,7 @@ const fileRef = React.useRef<HTMLInputElement | null>(null);
         }
         .sidebar-item.active {
           background: #ffffff;
-          color: #0d6efd;
+          color: #029DFE;
           border-color: #e8f0ff;
         }
         .sidebar-footer {

@@ -83,7 +83,6 @@ const initialState: DirectorFormState = {
   telephone: '',
   departements: [],
 };
-const [showPwd, setShowPwd] = useState(false);
 
 export default function DirectorForm({
   roles,
@@ -99,6 +98,8 @@ export default function DirectorForm({
   // Vérification d’unicité du login (temps réel)
   const [checkingLogin, setCheckingLogin] = useState(false);
   const [loginAvailable, setLoginAvailable] = useState<boolean | null>(null);
+
+  const [showPwd, setShowPwd] = useState(false);
 
   // Détection du rôle “Directeur des Études” pour préremplir le select
   const normalize = (s: string) =>
