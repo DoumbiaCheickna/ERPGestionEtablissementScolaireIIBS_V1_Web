@@ -957,125 +957,133 @@ export default function EtudiantsPage() {
       </div>
 
       {/* Si une classe est ouverte : vue étudiants */}
+      {/* Si une classe est ouverte : vue étudiants */}
       {openedClasse ? (
         <ClasseStudentsView
           classe={openedClasse}
           onBack={() => setOpenedClasse(null)}
         />
-      ) : (
-        <>
-          {/* FILIERES */}
-          <div className="card border-0 shadow-sm mb-3">
-            <div className="card-body">
-              <div className="d-flex align-items-center justify-content-between">
-                <h5 className="mb-3">Filières — {section}</h5>
-                {filieres.length > 0 && (
-                  <span className="small text-muted">{filieres.length} filière{filieres.length>1?'s':''}</span>
-                )}
+      ) : selectedFiliere ? (
+        /* ========= ÉTAPE 2 : CLASSES de la filière sélectionnée ========= */
+        <div className="card border-0 shadow-sm">
+          <div className="card-body">
+            <div className="d-flex align-items-center justify-content-between mb-2">
+              <div className="d-flex align-items-center gap-3">
+                <button
+                  className="btn btn-link px-0"
+                  onClick={() => setSelectedFiliere(null)}
+                >
+                  <i className="bi bi-arrow-left" /> Retour aux filières
+                </button>
+                <h5 className="mb-0">Classes — {selectedFiliere.libelle}</h5>
               </div>
-
-              {filieres.length === 0 ? (
-                <div className="text-muted">Aucune filière pour cette section et cette année.</div>
-              ) : (
-                 <div className={styles.filiereGrid}>
-                    {filieres.map(f => {
-                      const active = selectedFiliere?.id === f.id;
-                      return (
-                        <button
-                          key={f.id}
-                          className={clsx(styles.filiereCard, active && styles.isActive)}
-                          onClick={() => setSelectedFiliere(f)}
-                          title={f.libelle}
-                        >
-                          <span className={styles.icon}>
-                            <i className="bi bi-mortarboard" />
-                          </span>
-
-                          <span className={styles.content}>
-                            <span className={styles.title}>{f.libelle}</span>
-                            <span className={styles.subtitle}>Année {academicYearLabel}</span>
-                          </span>
-
-                          {active && (
-                            <span className={styles.check}>
-                              <i className="bi bi-check2" />
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+              {classes.length > 0 && (
+                <div className="small text-muted">
+                  {classes.length} classe{classes.length > 1 ? 's' : ''} • page {clsPage}/{totalPages}
+                </div>
               )}
             </div>
-          </div>
-          {/* CLASSES */}
-          <div className="card border-0 shadow-sm">
-            <div className="card-body">
-              <div className="d-flex align-items-center justify-content-between mb-2">
-                <h5 className="mb-0">
-                  {selectedFiliere ? `Classes — ${selectedFiliere.libelle}` : 'Classes'}
-                </h5>
-                {classes.length > 0 && (
-                  <div className="small text-muted">
-                    {classes.length} classe{classes.length>1?'s':''} • page {clsPage}/{totalPages}
-                  </div>
-                )}
-              </div>
 
-              {clsLoading ? (
-                <div className="text-center py-5"><div className="spinner-border" /></div>
-              ) : classes.length === 0 ? (
-                <div className="text-muted">Aucune classe.</div>
-              ) : (
-                <>
-                  <div className="row g-3">
-                    {paginatedClasses.map(c => (
-                      <div key={c.id} className="col-12 col-md-6 col-lg-4 d-flex align-items-stretch">
-                        <div className="card shadow-sm border-0 rounded-3 p-3 h-100 w-100">
-                          <div className="card-body d-flex flex-column">
-                            <div className="mb-2">
-                              <div className="fw-bold text-primary text-truncate" title={c.libelle}>
-                                {c.libelle}
-                              </div>
-                              <div className="text-muted small">{c.niveau_libelle}</div>
+            {clsLoading ? (
+              <div className="text-center py-5"><div className="spinner-border" /></div>
+            ) : classes.length === 0 ? (
+              <div className="text-muted">Aucune classe.</div>
+            ) : (
+              <>
+                <div className="row g-3">
+                  {paginatedClasses.map(c => (
+                    <div key={c.id} className="col-12 col-md-6 col-lg-4 d-flex align-items-stretch">
+                      <div className="card shadow-sm border-0 rounded-3 p-3 h-100 w-100">
+                        <div className="card-body d-flex flex-column">
+                          <div className="mb-2">
+                            <div className="fw-bold text-primary text-truncate" title={c.libelle}>
+                              {c.libelle}
                             </div>
-                            <div className="mt-auto d-flex flex-column gap-2">
-                              <button
-                                className="btn btn-outline-secondary w-100"
-                                onClick={() => setOpenedClasse(c)}
-                              >
-                                Ouvrir la liste des étudiants
-                              </button>
-                            </div>
+                            <div className="text-muted small">{c.niveau_libelle}</div>
+                          </div>
+                          <div className="mt-auto d-flex flex-column gap-2">
+                            <button
+                              className="btn btn-outline-secondary w-100"
+                              onClick={() => setOpenedClasse(c)}
+                            >
+                              Ouvrir la liste des étudiants
+                            </button>
                           </div>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
+                </div>
 
-                  {/* pagination */}
-                  <div className="d-flex justify-content-end align-items-center gap-2 mt-3">
-                    <button
-                      className="btn btn-outline-secondary btn-sm"
-                      disabled={clsPage <= 1}
-                      onClick={() => setClsPage(p => Math.max(1, p - 1))}
-                    >
-                      Précédent
-                    </button>
-                    <span className="small text-muted">Page {clsPage} / {totalPages}</span>
-                    <button
-                      className="btn btn-outline-secondary btn-sm"
-                      disabled={clsPage >= totalPages}
-                      onClick={() => setClsPage(p => Math.min(totalPages, p + 1))}
-                    >
-                      Suivant
-                    </button>
-                  </div>
-                </>
+                {/* pagination */}
+                <div className="d-flex justify-content-end align-items-center gap-2 mt-3">
+                  <button
+                    className="btn btn-outline-secondary btn-sm"
+                    disabled={clsPage <= 1}
+                    onClick={() => setClsPage(p => Math.max(1, p - 1))}
+                  >
+                    Précédent
+                  </button>
+                  <span className="small text-muted">Page {clsPage} / {totalPages}</span>
+                  <button
+                    className="btn btn-outline-secondary btn-sm"
+                    disabled={clsPage >= totalPages}
+                    onClick={() => setClsPage(p => Math.min(totalPages, p + 1))}
+                  >
+                    Suivant
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* ========= ÉTAPE 1 : FILIÈRES ========= */
+        <div className="card border-0 shadow-sm mb-3">
+          <div className="card-body">
+            <div className="d-flex align-items-center justify-content-between">
+              <h5 className="mb-3">Filières — {section}</h5>
+              {filieres.length > 0 && (
+                <span className="small text-muted">{filieres.length} filière{filieres.length>1?'s':''}</span>
               )}
             </div>
+
+            {filieres.length === 0 ? (
+              <div className="text-muted">Aucune filière pour cette section et cette année.</div>
+            ) : (
+              <div className={styles.filiereGrid}>
+                {filieres.map(f => {
+                  const active = !!selectedFiliere && selectedFiliere.id === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      className={clsx(styles.filiereCard, active && styles.isActive)}
+                      onClick={() => {
+                        setSelectedFiliere(f);
+                        // optionnel : remonter en haut
+                        if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      title={f.libelle}
+                    >
+                      <span className={styles.icon}>
+                        <i className="bi bi-mortarboard" />
+                      </span>
+                      <span className={styles.content}>
+                        <span className={styles.title}>{f.libelle}</span>
+                        <span className={styles.subtitle}>Année {academicYearLabel}</span>
+                      </span>
+                      {active && (
+                        <span className={styles.check}>
+                          <i className="bi bi-check2" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </>
+        </div>
       )}
 
       {/* Toasts globaux */}
