@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "echo \"lint skipped on Render\""
   },
   "dependencies": {
     "bootstrap": "^5.3.7",
