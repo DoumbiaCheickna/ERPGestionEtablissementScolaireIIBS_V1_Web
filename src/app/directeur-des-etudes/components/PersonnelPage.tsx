@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
 import PersonnelForm from "./personnel/PersonnelForm";
+import ModalPortal from "./ModalPortal";
 
 /* ------------------------------------------------------------------ */
 const ROLE_LABEL = "Assistant Directeur des Etudes";
@@ -378,6 +379,7 @@ export default function PersonnelPage() {
 
       {/* Créer */}
       {showCreate && (
+        <ModalPortal>
         <>
           <PersonnelForm
             mode="create"
@@ -391,10 +393,12 @@ export default function PersonnelPage() {
           />
           <div className="modal-backdrop fade show" onClick={() => setShowCreate(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Modifier */}
       {editDocId && (
+        <ModalPortal>
         <>
           <PersonnelForm
             mode="edit"
@@ -409,10 +413,12 @@ export default function PersonnelPage() {
           />
           <div className="modal-backdrop fade show" onClick={() => setEditDocId(null)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Détails — affiche TOUT */}
       {detailsOpen && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -704,10 +710,12 @@ export default function PersonnelPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={() => setDetailsOpen(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Supprimer — modale DANGER */}
       {deleteDocId && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-dialog-centered">
@@ -735,7 +743,12 @@ export default function PersonnelPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={() => setDeleteDocId(null)} />
         </>
+        </ModalPortal>
       )}
+       <style jsx global>{`
+        .modal-backdrop { z-index: 1990 !important; }
+        .modal          { z-index: 2000 !important; }
+      `}</style>
     </div>
   );
 }

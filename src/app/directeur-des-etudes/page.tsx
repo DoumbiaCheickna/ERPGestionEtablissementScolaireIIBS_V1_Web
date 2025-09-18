@@ -121,7 +121,7 @@ export default function DirecteurHomePage() {
 
           /* pas de marge externe, c’est la boîte fixe */
           padding: 0;
-          z-index: 1040; /* sous la topbar (1050) */
+          z-index: auto; 
         }
 
         /* Grande carte blanche arrondie qui contient TOUT le contenu */
@@ -145,7 +145,7 @@ export default function DirecteurHomePage() {
 
         /* Zone principale (à droite si SecondaryMenu est affiché) */
         .main-area { flex: 1; min-width: 0; }
-
+        
         /* Responsive */
         @media (max-width: 1400px) {
           .content-card {

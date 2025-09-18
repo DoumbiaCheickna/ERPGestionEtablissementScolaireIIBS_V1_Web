@@ -9,6 +9,8 @@ import {
 } from 'firebase/firestore';
 import { useAcademicYear } from '../context/AcademicYearContext';
 import Toast from '../../admin/components/ui/Toast';
+import ModalPortal from "./ModalPortal";
+
 
 /* ------------------------- Types utiles ------------------------- */
 type TUser = {
@@ -572,6 +574,7 @@ export default function HomeDashboard({
 
       {/* ---------------------- Modals année ---------------------- */}
       {showNewYear && (
+         <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: 'block' }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-dialog-centered">
@@ -618,9 +621,11 @@ export default function HomeDashboard({
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowNewYear(false)} />
         </>
+        </ModalPortal>
       )}
 
       {showEdit && selected && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: 'block' }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-dialog-centered">
@@ -665,6 +670,7 @@ export default function HomeDashboard({
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowEdit(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Toasts */}
@@ -702,6 +708,9 @@ export default function HomeDashboard({
           width: 6px; height: 6px; border-radius: 50%;
           background: #0b5ed7; position: absolute; bottom: 4px;
         }
+        /* Garantit que les modales passent devant tout */
+        .modal-backdrop { z-index: 1990 !important; }
+        .modal          { z-index: 2000 !important; }
       `}</style>
     </div>
   );

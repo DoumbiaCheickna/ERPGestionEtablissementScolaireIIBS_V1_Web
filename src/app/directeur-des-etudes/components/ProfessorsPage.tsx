@@ -20,7 +20,7 @@ import Toast from "../../admin/components/ui/Toast";
 // ✅ formulaire modale (création & édition)
 import ProfesseurForm from "../../admin/pages/users/professeurForm";
 import { useAcademicYear } from "../context/AcademicYearContext";
-
+import ModalPortal from "./ModalPortal";
 
 // NEW: petit cache mémoire process-local (reste le temps du rafraîchissement de page)
 const memoryCache = new Map<string, TUserRow[]>();
@@ -1273,6 +1273,7 @@ export default function ProfessorsPage() {
 
       {/* Créer */}
       {showCreate && (
+        <ModalPortal>
         <>
           <ProfesseurFormTyped
             mode="create"
@@ -1288,10 +1289,12 @@ export default function ProfessorsPage() {
           />
           <div className="modal-backdrop fade show" onClick={() => setShowCreate(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Modifier */}
       {editDocId && (
+        <ModalPortal>
         <>
           <ProfesseurFormTyped
             mode="edit"
@@ -1308,10 +1311,12 @@ export default function ProfessorsPage() {
           />
           <div className="modal-backdrop fade show" onClick={() => setEditDocId(null)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Détails — affiche TOUT */}
       {showDetails && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -1562,10 +1567,12 @@ export default function ProfessorsPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowDetails(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Assigner (Section → Filière → Classe → Matières) */}
       {showAssign && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -1897,10 +1904,12 @@ export default function ProfessorsPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowAssign(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Supprimer — modale DANGER (définitif, toutes années) */}
       {showDelete && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-dialog-centered">
@@ -1947,9 +1956,11 @@ export default function ProfessorsPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowDelete(false)} />
         </>
+        </ModalPortal>
       )}
 
       {showTransfer && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-dialog-centered">
@@ -2004,12 +2015,17 @@ export default function ProfessorsPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowTransfer(false)} />
         </>
+        </ModalPortal>
       )}
 
 
       {/* Toasts */}
       <Toast message={toast} type="success" show={okShow} onClose={() => setOkShow(false)} />
       <Toast message={toast} type="error" show={errShow} onClose={() => setErrShow(false)} />
+      <style jsx global>{`
+        .modal-backdrop { z-index: 1990 !important; }
+        .modal          { z-index: 2000 !important; }
+      `}</style>
     </div>
   );
 }

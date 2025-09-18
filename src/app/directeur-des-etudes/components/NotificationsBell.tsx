@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
 import { useAcademicYear } from "../context/AcademicYearContext";
+import ModalPortal from "./ModalPortal";
 
 // ---- Types ----
 type TSemestre = "S1"|"S2"|"S3"|"S4"|"S5"|"S6";

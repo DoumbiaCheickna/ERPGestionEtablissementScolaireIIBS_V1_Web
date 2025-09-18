@@ -11,6 +11,7 @@ import { useAcademicYear } from '../context/AcademicYearContext';
 import Toast from '../../admin/components/ui/Toast';
 import StudentForm from '../../admin/pages/users/etudiantForm';
 import styles from "./Filiere.module.css";
+import ModalPortal from "./ModalPortal";
 
 /* ========================= Types ========================= */
 
@@ -688,6 +689,7 @@ export default function EtudiantsPage() {
         </div>
         {/* Modal AJOUT étudiant */}
         {showAddStudent && (
+           <ModalPortal>
           <>
             <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
               <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -726,10 +728,12 @@ export default function EtudiantsPage() {
             </div>
             <div className="modal-backdrop fade show" onClick={closeAdd} />
           </>
+          </ModalPortal>
         )}
 
         {/* Modal REINSCRIPTION */}
         {reinscOpen && (
+          <ModalPortal>
           <>
             <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
               <div className="modal-dialog modal-dialog-centered">
@@ -792,9 +796,11 @@ export default function EtudiantsPage() {
             </div>
             <div className="modal-backdrop fade show" onClick={() => setReinscOpen(null)} />
           </>
+          </ModalPortal>
         )}
 
         {dualOpen && (
+          <ModalPortal>
           <>
             <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
               <div className="modal-dialog modal-dialog-centered">
@@ -831,6 +837,7 @@ export default function EtudiantsPage() {
             </div>
             <div className="modal-backdrop fade show" onClick={()=>setDualOpen(null)} />
           </>
+          </ModalPortal>
         )}
 
         {/* Modal VOIR — affiche TOUT */}
@@ -1097,6 +1104,10 @@ export default function EtudiantsPage() {
           padding-right: .3rem;
         }
       `}</style>
+      <style jsx global>{`
+        .modal-backdrop { z-index: 1990 !important; }
+        .modal          { z-index: 2000 !important; }
+      `}</style>
     </div>
   );
     
@@ -1120,6 +1131,7 @@ function StudentViewModal({ userId, onClose }: { userId: string; onClose: () => 
   }, [userId]);
 
   return (
+    <ModalPortal>
     <>
       <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
         <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -1256,6 +1268,7 @@ function StudentViewModal({ userId, onClose }: { userId: string; onClose: () => 
       </div>
       <div className="modal-backdrop fade show" onClick={onClose} />
     </>
+    </ModalPortal>
   );
 }
 
@@ -1427,6 +1440,7 @@ function StudentEditInscriptionModal({
   const phone9 = (v: string) => onlyDigits(v).slice(0,9);
 
   return (
+    <ModalPortal>
     <>
       <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
         <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -1743,6 +1757,7 @@ function StudentEditInscriptionModal({
       </div>
       <div className="modal-backdrop fade show" onClick={onClose} />
     </>
+    </ModalPortal>
   );
 }
 
@@ -1767,6 +1782,7 @@ function StudentDeleteModal({
   };
 
   return (
+    <ModalPortal>
     <>
       <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
         <div className="modal-dialog modal-md modal-dialog-centered">
@@ -1795,5 +1811,7 @@ function StudentDeleteModal({
       </div>
       <div className="modal-backdrop fade show" onClick={onCancel} />
     </>
+    </ModalPortal>
+
   );
 }

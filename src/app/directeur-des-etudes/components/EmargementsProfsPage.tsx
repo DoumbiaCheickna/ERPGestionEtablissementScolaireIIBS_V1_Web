@@ -7,6 +7,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../../../firebaseConfig";
 import { notifyDirecteurProfEmargement } from "@/lib/notifications";
+import ModalPortal from "./ModalPortal";
 
 const useJsPDF = () => {
   const ref = React.useRef<{ jsPDF: any; autoTable: (doc: any, opts: any) => any } | null>(null);
@@ -473,6 +474,7 @@ export default function EmargementsProfsPage() {
 
       {/* MODALE — TOUS LES PROFS */}
       {showMonthlyAll && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display:"block" }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -529,10 +531,12 @@ export default function EmargementsProfsPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={()=>setShowMonthlyAll(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* MODALE — UN PROF */}
       {showMonthlyOne && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display:"block" }} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-lg modal-dialog-centered">
@@ -580,6 +584,7 @@ export default function EmargementsProfsPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={()=>setShowMonthlyOne(null)} />
         </>
+        </ModalPortal>
       )}
       <style jsx>{`
         :global(nav[aria-label="breadcrumb"] .breadcrumb .breadcrumb-item),
@@ -588,6 +593,10 @@ export default function EmargementsProfsPage() {
         :global(nav[aria-label="breadcrumb"] .breadcrumb .breadcrumb-item + .breadcrumb-item::before) {
             color: #0d6efd !important;
         }
+      `}</style>
+      <style jsx global>{`
+        .modal-backdrop { z-index: 1990 !important; }
+        .modal          { z-index: 2000 !important; }
       `}</style>
     </div>
   );

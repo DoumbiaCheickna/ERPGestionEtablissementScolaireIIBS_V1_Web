@@ -25,6 +25,7 @@ import {
   startOfDay as dayStart,
   endOfDay as dayEnd,
 } from "../lib/calendarRules";
+import ModalPortal from "./ModalPortal";
 
 /* ========================= Types ========================= */
 
@@ -493,6 +494,7 @@ export default function EmargementsPage() {
 
       {/* Modal FERMETURE */}
       {showClosure && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-lg modal-dialog-centered">
@@ -587,6 +589,7 @@ export default function EmargementsPage() {
           </div>
           <div className="modal-backdrop fade show" onClick={()=>setShowClosure(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* toasts */}
@@ -599,6 +602,10 @@ export default function EmargementsPage() {
           content: ">";
           padding-right: .3rem;
         }
+      `}</style>
+      <style jsx global>{`
+        .modal-backdrop { z-index: 1990 !important; }
+        .modal          { z-index: 2000 !important; }
       `}</style>
     </div>
   );
@@ -1408,6 +1415,7 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
 
       {/* Modal RATTRAPAGE */}
       {showMakeup && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
             <div className="modal-dialog modal-md modal-dialog-centered">
@@ -1465,6 +1473,7 @@ function ClasseSeancesAbsents({ classe, yearId, yearLabel }:{
           </div>
           <div className="modal-backdrop fade show" onClick={()=>setShowMakeup(false)} />
         </>
+        </ModalPortal>
       )}
     </>
   );
@@ -1845,6 +1854,7 @@ function DetailsModal({ title, items, onClose }:{
   onClose: () => void;
 }) {
   return (
+    <ModalPortal>
     <>
       <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
         <div className="modal-dialog modal-lg modal-dialog-centered">
@@ -1896,5 +1906,6 @@ function DetailsModal({ title, items, onClose }:{
       </div>
       <div className="modal-backdrop fade show" onClick={onClose}/>
     </>
+    </ModalPortal>
   );
 }

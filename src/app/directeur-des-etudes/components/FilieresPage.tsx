@@ -22,6 +22,7 @@ import Toast from "../../admin/components/ui/Toast";
 import { useAcademicYear } from "../context/AcademicYearContext";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import ModalPortal from "./ModalPortal";
 
 /* ================= Types & helpers ================= */
 
@@ -146,6 +147,7 @@ function ConfirmDeleteModal({
 }) {
   if (!show) return null;
   return (
+      <ModalPortal>
     <>
       <div className="modal fade show" style={{ display: "block" }} aria-modal="true" role="dialog">
         <div className="modal-dialog modal-dialog-centered">
@@ -185,6 +187,7 @@ function ConfirmDeleteModal({
       </div>
       <div className="modal-backdrop fade show" onClick={onCancel} />
     </>
+    </ModalPortal>
   );
 }
 
@@ -643,6 +646,7 @@ function FilieresList({
 
       {/* Modal ajout filière */}
       {showAdd && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }}>
             <div className="modal-dialog modal-dialog-centered">
@@ -675,10 +679,12 @@ function FilieresList({
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowAdd(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Modal édition filière */}
       {edit && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }}>
             <div className="modal-dialog modal-dialog-centered">
@@ -709,6 +715,7 @@ function FilieresList({
           </div>
           <div className="modal-backdrop fade show" onClick={() => setEdit(null)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Double confirmation suppression */}
@@ -946,6 +953,7 @@ function FiliereClasses({
 
       {/* Modal ajout classe */}
       {showAdd && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }}>
             <div className="modal-dialog modal-dialog-centered">
@@ -1022,6 +1030,7 @@ function FiliereClasses({
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowAdd(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Double confirmation suppression */}
@@ -1901,6 +1910,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
 
       {/* Modal ajouter matière */}
       {showAdd && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }}>
             <div className="modal-dialog modal-dialog-centered">
@@ -1976,10 +1986,12 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowAdd(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Modal éditer matière */}
       {edit && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }}>
             <div className="modal-dialog modal-dialog-centered">
@@ -2062,6 +2074,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
           </div>
           <div className="modal-backdrop fade show" onClick={() => setEdit(null)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Double confirmation suppression matière */}
@@ -2090,6 +2103,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
 
       {/* Modal éditer UE */}
       {ueEdit && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }}>
             <div className="modal-dialog modal-dialog-centered">
@@ -2130,6 +2144,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
           </div>
           <div className="modal-backdrop fade show" onClick={() => setUeEdit(null)} />
         </>
+        </ModalPortal>
       )}
 
       {/* Double confirmation suppression UE (unitaire) */}
@@ -2218,6 +2233,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
 
     if (!show) return null;
     return (
+      <ModalPortal>
       <>
         <div className="modal fade show" style={{ display: "block" }}>
           <div className="modal-dialog modal-dialog-centered">
@@ -2267,6 +2283,7 @@ function MatieresSection({ classe, ok, ko }: { classe: TClasse; ok: (m: string) 
         </div>
         <div className="modal-backdrop fade show" onClick={onClose} />
       </>
+      </ModalPortal>
     );
   }
 }
@@ -2770,6 +2787,7 @@ function EDTSection({
 
       {/* MODAL CREATION EDT */}
       {showCreate && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }}>
             <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -2833,10 +2851,12 @@ function EDTSection({
           </div>
           <div className="modal-backdrop fade show" onClick={() => setShowCreate(false)} />
         </>
+        </ModalPortal>
       )}
 
       {/* MODAL VOIR / MODIFIER / APERÇU PDF */}
       {preview.open && preview.edt && (
+        <ModalPortal>
         <>
           <div className="modal fade show" style={{ display: "block" }}>
             <div className="modal-dialog modal-xl modal-dialog-centered">
@@ -2911,6 +2931,7 @@ function EDTSection({
           </div>
           <div className="modal-backdrop fade show" onClick={closePreview} />
         </>
+        </ModalPortal>
       )}
 
       {/* Double confirmation suppression EDT */}
@@ -3159,6 +3180,10 @@ function renderDayEditors(args: {
           </div>
         );
       })}
+      <style jsx global>{`
+        .modal-backdrop { z-index: 1990 !important; }
+        .modal          { z-index: 2000 !important; }
+      `}</style>
     </div>
   );
 }
