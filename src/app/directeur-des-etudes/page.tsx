@@ -111,27 +111,40 @@ export default function DirecteurHomePage() {
 
         /* Conteneur centré : limite de largeur pour éviter de coller le bord droit */
         .content-container {
-          padding: 16px 18px;        /* air autour de la grande carte */
+          position: fixed;
+          /* aligne sous la topbar (88px = .topbar-spacer) */
+          top: 88px;
+          /* aligne avec la topbar à droite et la sidebar à gauche */
+          left: calc(230px + 24px + 12px);
+          right: 12px;
+          bottom: 12px;
+
+          /* pas de marge externe, c’est la boîte fixe */
+          padding: 0;
+          z-index: 1040; /* sous la topbar (1050) */
         }
 
         /* Grande carte blanche arrondie qui contient TOUT le contenu */
         .content-card {
-          max-width: 1180px;         /* <<< règle la largeur max du contenu */
-          margin: 0 auto;            /* centre la carte */
+          height: 100%;
+          width: 100%;
+          margin: 0;
+          padding: 20px 22px;
+
           background: #fff;
           border: 1px solid #e9eef5;
           border-radius: 18px;
-          box-shadow: 0 10px 30px rgba(13, 110, 253, 0.06);
-          padding: 20px 22px;
+          box-shadow: 0 10px 30px rgba(13,110,253,.06);
+
           display: flex;
           gap: 16px;
+
+          /* 👇 le scroll se fait à l’intérieur de la carte */
+          overflow: auto;
         }
 
         /* Zone principale (à droite si SecondaryMenu est affiché) */
-        .main-area {
-          flex: 1;
-          min-width: 0; /* évite les débordements flex */
-        }
+        .main-area { flex: 1; min-width: 0; }
 
         /* Responsive */
         @media (max-width: 1400px) {
@@ -146,8 +159,14 @@ export default function DirecteurHomePage() {
           }
         }
         @media (max-width: 991.98px) {
+          .content-container {
+            left: 12px;   /* plus de sidebar fixe sur mobile */
+            right: 12px;
+            top: 80px;    /* = .topbar-spacer mobile */
+            bottom: 12px;
+          }
           .content-card {
-            max-width: 92vw;        /* garde des marges sur mobile/tablette */
+            border-radius: 12px;
             padding: 14px;
           }
         }
