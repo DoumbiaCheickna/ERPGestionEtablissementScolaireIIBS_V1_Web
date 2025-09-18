@@ -184,7 +184,7 @@ export default function EtudiantsPage() {
       const cached = cacheGet<TFiliere[]>(cacheKey);
       if (cached) {
         setFilieres(cached);
-        setSelectedFiliere(prev => (prev && cached.find(r => r.id === prev.id)) ? prev : (cached[0] ?? null));
+        setSelectedFiliere(prev => (prev && cached.find(r => r.id === prev.id)) ? prev : null);
         setFilieresForForm(cached.map(r => ({ id: r.id, libelle: r.libelle })));
         return; // 👈 instantané si déjà en cache
       }
@@ -213,7 +213,7 @@ export default function EtudiantsPage() {
         cacheSet(cacheKey, rows);
 
         setFilieres(rows);
-        setSelectedFiliere(prev => (prev && rows.find(r => r.id === prev.id)) ? prev : (rows[0] ?? null));
+        setSelectedFiliere(prev => (prev && rows.find(r => r.id === prev.id)) ? prev : null);
         setFilieresForForm(rows.map(r => ({ id: r.id, libelle: r.libelle })));
       } catch(e) {
         console.error(e);

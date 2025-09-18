@@ -41,3 +41,8 @@ a {
     color-scheme: dark;
   }
 }
+
+.breadcrumb-item + .breadcrumb-item::before {
+  content: ">";
+  padding-right: .3rem;
+}
