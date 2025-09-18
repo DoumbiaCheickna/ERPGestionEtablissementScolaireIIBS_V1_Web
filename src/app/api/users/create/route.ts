@@ -1,4 +1,7 @@
 //src/app/api/users/create/route.ts
+
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { adminAuth, adminDb, adminFieldValue } from '@/lib/firebaseAdmin';
 
