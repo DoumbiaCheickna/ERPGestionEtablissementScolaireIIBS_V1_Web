@@ -142,6 +142,63 @@ export default function EtudiantsPage() {
   const academicYearId = selected?.id || '';
   const academicYearLabel = selected?.label || '';
 
+    // --- NEW: ajout étudiant global (depuis la barre du haut)
+  const [showGlobalAdd, setShowGlobalAdd] = useState(false);
+  const [globalFiliereId, setGlobalFiliereId] = useState<string>('');
+  const [globalNiveauId, setGlobalNiveauId] = useState<string>('');
+  const [globalBusy, setGlobalBusy] = useState(false);
+  const [globalErr, setGlobalErr] = useState<string | null>(null);
+
+  // classe(s) candidate(s) trouvée(s) pour (filiere, niveau, année)
+  const [globalClassChoices, setGlobalClassChoices] = useState<TClasse[]>([]);
+  const [globalClassId, setGlobalClassId] = useState<string>('');
+
+  // Résoudre classes candidates selon filière + niveau + année
+  const resolveClassesForFN = async (filiereId: string, niveauId: string, yearId: string) => {
+    setGlobalErr(null);
+    setGlobalBusy(true);
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, 'classes'),
+          where('academic_year_id', '==', yearId),
+          where('filiere_id', '==', filiereId),
+          where('niveau_id', '==', niveauId)
+        )
+      );
+      const rows: TClasse[] = [];
+      snap.forEach(d => {
+        const v = d.data() as any;
+        rows.push({
+          id: d.id,
+          filiere_id: String(v.filiere_id),
+          filiere_libelle: String(v.filiere_libelle || ''),
+          niveau_id: String(v.niveau_id || ''),
+          niveau_libelle: String(v.niveau_libelle || ''),
+          libelle: String(v.libelle || ''),
+          academic_year_id: String(v.academic_year_id || '')
+        });
+      });
+      rows.sort((a,b)=>a.libelle.localeCompare(b.libelle));
+      setGlobalClassChoices(rows);
+      setGlobalClassId(rows.length === 1 ? rows[0].id : '');
+      if (rows.length === 0) setGlobalErr("Aucune classe trouvée pour ce couple (filière, niveau) dans cette année.");
+    } catch(e) {
+      console.error(e);
+      setGlobalErr("Erreur lors de la résolution de la classe.");
+    } finally {
+      setGlobalBusy(false);
+    }
+  };
+
+  // pour invalider les caches concernés après création globale
+  const invalidateListsCache = () => {
+    cacheDelPrefix(`classes:`); // sécuritaire, invalide les listes de classes
+    cacheDelPrefix(`students:`); // sécuritaire, invalide les listes d’étudiants
+    cacheDelPrefix(`filieres:`); // au cas où
+  };
+
+
   // UI : section à gauche
   const [section, setSection] = useState<SectionKey>('Gestion');
 
@@ -949,16 +1006,18 @@ export default function EtudiantsPage() {
           </div>
 
           <button
-            className="btn btn-outline-secondary btn-sm"
+            className="btn btn-primary btn-sm"
             onClick={() => {
-              if (selectedFiliere) {
-                cacheDelPrefix(`classes:${selectedFiliere.id}:`);
-                cacheDelPrefix(`filieres:${section}:${academicYearId}`);
-                setSelectedFiliere(f => f ? { ...f } : f); // retriggere les effets
-              }
+              setGlobalErr(null);
+              setGlobalFiliereId('');
+              setGlobalNiveauId('');
+              setGlobalClassChoices([]);
+              setGlobalClassId('');
+              setShowGlobalAdd(true);
             }}
+            title="Ajouter un étudiant par (Filière, Niveau) avec classe résolue automatiquement"
           >
-            Actualiser vue
+            <i className="bi bi-person-plus me-1" /> Ajouter Étudiant
           </button>
         </div>
       </div>
@@ -1091,6 +1150,168 @@ export default function EtudiantsPage() {
             )}
           </div>
         </div>
+      )}
+
+      {showGlobalAdd && (
+        <ModalPortal>
+        <>
+          <div className="modal fade show" style={{display:'block'}} aria-modal="true" role="dialog">
+            <div className="modal-dialog modal-xl modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">
+                    <i className="bi bi-person-plus me-2" />
+                    Ajouter un étudiant — (sélection filière & niveau)
+                  </h5>
+                  <button className="btn-close" onClick={()=>setShowGlobalAdd(false)} />
+                </div>
+
+                <div className="modal-body">
+                  {/* Étape A : choisir filière + niveau */}
+                  <div className="row g-3">
+                    {globalErr && <div className="col-12"><div className="alert alert-danger">{globalErr}</div></div>}
+
+                    <div className="col-md-6">
+                      <label className="form-label">Filière</label>
+                      <select
+                        className="form-select"
+                        value={globalFiliereId}
+                        onChange={async (e)=>{
+                          const v = e.target.value;
+                          setGlobalFiliereId(v);
+                          setGlobalClassChoices([]);
+                          setGlobalClassId('');
+                          if (v && globalNiveauId && academicYearId) {
+                            await resolveClassesForFN(v, globalNiveauId, academicYearId);
+                          }
+                        }}
+                      >
+                        <option value="">— Sélectionner —</option>
+                        {filieresForForm.map(f => (
+                          <option key={f.id} value={f.id}>{f.libelle}</option>
+                        ))}
+                      </select>
+                      <div className="form-text">Section actuelle : {section} • Année : {academicYearLabel || '—'}</div>
+                    </div>
+
+                    <div className="col-md-6">
+                      <label className="form-label">Niveau</label>
+                      <select
+                        className="form-select"
+                        value={globalNiveauId}
+                        onChange={async (e)=>{
+                          const v = e.target.value;
+                          setGlobalNiveauId(v);
+                          setGlobalClassChoices([]);
+                          setGlobalClassId('');
+                          if (globalFiliereId && v && academicYearId) {
+                            await resolveClassesForFN(globalFiliereId, v, academicYearId);
+                          }
+                        }}
+                      >
+                        <option value="">— Sélectionner —</option>
+                        {niveaux.map(n => (
+                          <option key={n.id} value={n.id}>{n.libelle}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Info classes résolues */}
+                    {(globalBusy) && (
+                      <div className="col-12">
+                        <div className="text-muted"><span className="spinner-border spinner-border-sm me-2" />Recherche de la classe…</div>
+                      </div>
+                    )}
+
+                    {!globalBusy && globalFiliereId && globalNiveauId && (
+                      <>
+                        {globalClassChoices.length > 1 && (
+                          <div className="col-md-6">
+                            <label className="form-label">Plusieurs classes trouvées — choisissez</label>
+                            <select
+                              className="form-select"
+                              value={globalClassId}
+                              onChange={(e)=>setGlobalClassId(e.target.value)}
+                            >
+                              <option value="">— Sélectionner —</option>
+                              {globalClassChoices.map(c=>(
+                                <option key={c.id} value={c.id}>{c.libelle}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {globalClassChoices.length === 1 && (
+                          <div className="col-md-12">
+                            <div className="alert alert-info py-2">
+                              Classe résolue automatiquement : <strong>{globalClassChoices[0].libelle}</strong>
+                            </div>
+                          </div>
+                        )}
+
+                        {globalClassChoices.length === 0 && !globalErr && (
+                          <div className="col-12">
+                            <div className="alert alert-warning">Aucune classe disponible pour ce couple (filière, niveau).</div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  <hr className="mt-4 mb-3" />
+
+                  {/* Étape B : Formulaire d’ajout (StudentForm) quand une classe est déterminée */}
+                  {(() => {
+                    const chosen =
+                      globalClassChoices.length === 1
+                        ? globalClassChoices[0]
+                        : globalClassChoices.find(c => c.id === globalClassId);
+
+                    if (!chosen) {
+                      return (
+                        <div className="text-muted">
+                          Sélectionnez une <strong>filière</strong> et un <strong>niveau</strong> pour résoudre la classe,
+                          puis le formulaire d’ajout s’affichera ici.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <StudentForm
+                        roles={roles}
+                        niveaux={niveaux}
+                        filieres={filieresForForm}
+                        partenaires={partenaires}
+                        showSuccessToast={ok}
+                        showErrorToast={ko}
+                        fetchData={async (_force?: boolean) => { /* no-op */ }}
+                        defaultAnnee={academicYearLabel}
+                        defaultYearId={chosen.academic_year_id}
+                        defaultNiveauId={chosen.niveau_id}
+                        defaultFiliereId={chosen.filiere_id}
+                        defaultClasse={{ id: chosen.id, libelle: chosen.libelle }}
+                        onCreated={async () => {
+                          // fermer et rafraîchir les listes pertinentes
+                          setShowGlobalAdd(false);
+                          invalidateListsCache();
+                          // si une classe est ouverte, on laisse la vue de classe se rafraîchir dans ses propres modales
+                          // sinon, un petit toast global suffit
+                          ok('Étudiant ajouté.');
+                        }}
+                      />
+                    );
+                  })()}
+                </div>
+
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary btn-sm" onClick={()=>setShowGlobalAdd(false)}>Fermer</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show" onClick={()=>setShowGlobalAdd(false)} />
+        </>
+        </ModalPortal>
       )}
 
       {/* Toasts globaux */}
